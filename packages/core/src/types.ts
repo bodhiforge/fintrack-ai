@@ -8,11 +8,13 @@
 
 export interface Transaction {
   id: string;
+  projectId?: string;
   date: string; // ISO 8601 format
   merchant: string;
   amount: number;
   currency: Currency;
   category: Category;
+  location?: string;
   cardLastFour: string;
   payer: string;
   isShared: boolean;
@@ -29,7 +31,42 @@ export interface ParsedTransaction {
   category: Category;
   cardLastFour: string;
   date: string;
+  location?: string;
   rawText?: string;
+}
+
+// ============================================
+// User & Project Types
+// ============================================
+
+export interface User {
+  id: number;                    // Telegram user ID
+  username?: string;
+  firstName?: string;
+  currentProjectId?: string;
+  createdAt: string;
+}
+
+export interface Project {
+  id: string;
+  name: string;
+  type: 'ongoing' | 'trip' | 'event';
+  defaultCurrency: Currency;
+  defaultLocation?: string;
+  inviteCode: string;
+  ownerId: number;
+  isActive: boolean;
+  startDate?: string;
+  endDate?: string;
+  createdAt: string;
+}
+
+export interface ProjectMember {
+  projectId: string;
+  userId: number;
+  displayName: string;
+  role: 'owner' | 'member';
+  joinedAt: string;
 }
 
 export type Currency = 'CAD' | 'USD' | 'EUR' | 'GBP' | 'MXN' | 'CRC' | 'JPY' | string;

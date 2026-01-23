@@ -15,6 +15,8 @@ import {
   type Transaction,
   type Category,
   type Currency,
+  type User,
+  type Project,
 } from '@fintrack-ai/core';
 
 // ============================================
@@ -146,11 +148,13 @@ const ALLOWED_USERS = [
 function rowToTransaction(row: Record<string, unknown>): Transaction {
   return {
     id: row.id as string,
+    projectId: row.project_id as string,
     date: row.created_at as string,
     merchant: row.merchant as string,
     amount: row.amount as number,
     currency: row.currency as Currency,
     category: row.category as Category,
+    location: row.location as string | undefined,
     cardLastFour: (row.card_last_four as string) || '',
     payer: row.payer as string,
     isShared: row.is_shared === 1,
@@ -158,6 +162,98 @@ function rowToTransaction(row: Record<string, unknown>): Transaction {
     createdAt: row.created_at as string,
     confirmedAt: row.confirmed_at as string,
   };
+}
+
+function rowToUser(row: Record<string, unknown>): User {
+  return {
+    id: row.id as number,
+    username: row.username as string | undefined,
+    firstName: row.first_name as string | undefined,
+    currentProjectId: row.current_project_id as string | undefined,
+    createdAt: row.created_at as string,
+  };
+}
+
+function rowToProject(row: Record<string, unknown>): Project {
+  return {
+    id: row.id as string,
+    name: row.name as string,
+    type: row.type as 'ongoing' | 'trip' | 'event',
+    defaultCurrency: row.default_currency as Currency,
+    defaultLocation: row.default_location as string | undefined,
+    inviteCode: row.invite_code as string,
+    ownerId: row.owner_id as number,
+    isActive: row.is_active === 1,
+    startDate: row.start_date as string | undefined,
+    endDate: row.end_date as string | undefined,
+    createdAt: row.created_at as string,
+  };
+}
+
+function generateInviteCode(): string {
+  const chars = 'ABCDEFGHJKLMNPQRSTUVWXYZ23456789';
+  let code = '';
+  for (let i = 0; i < 6; i++) {
+    code += chars.charAt(Math.floor(Math.random() * chars.length));
+  }
+  return code;
+}
+
+async function getOrCreateUser(env: Env, telegramUser: TelegramUser): Promise<User> {
+  const existing = await env.DB.prepare(
+    'SELECT * FROM users WHERE id = ?'
+  ).bind(telegramUser.id).first();
+
+  if (existing) {
+    return rowToUser(existing as Record<string, unknown>);
+  }
+
+  // Create new user with default project
+  await env.DB.prepare(`
+    INSERT INTO users (id, username, first_name, current_project_id, created_at)
+    VALUES (?, ?, ?, 'default', ?)
+  `).bind(
+    telegramUser.id,
+    telegramUser.username || null,
+    telegramUser.first_name,
+    new Date().toISOString()
+  ).run();
+
+  // Add to default project
+  await env.DB.prepare(`
+    INSERT OR IGNORE INTO project_members (project_id, user_id, display_name, role, joined_at)
+    VALUES ('default', ?, ?, 'member', ?)
+  `).bind(telegramUser.id, telegramUser.first_name, new Date().toISOString()).run();
+
+  return {
+    id: telegramUser.id,
+    username: telegramUser.username,
+    firstName: telegramUser.first_name,
+    currentProjectId: 'default',
+    createdAt: new Date().toISOString(),
+  };
+}
+
+async function getCurrentProject(env: Env, userId: number): Promise<Project | null> {
+  const user = await env.DB.prepare(
+    'SELECT current_project_id FROM users WHERE id = ?'
+  ).bind(userId).first();
+
+  if (!user || !user.current_project_id) return null;
+
+  const project = await env.DB.prepare(
+    'SELECT * FROM projects WHERE id = ?'
+  ).bind(user.current_project_id).first();
+
+  return project ? rowToProject(project as Record<string, unknown>) : null;
+}
+
+async function getProjectMembers(env: Env, projectId: string): Promise<string[]> {
+  const rows = await env.DB.prepare(
+    'SELECT display_name FROM project_members WHERE project_id = ?'
+  ).bind(projectId).all();
+
+  return rows.results?.map((r) => (r as Record<string, unknown>).display_name as string) ?? [];
 }
 
 // ============================================
@@ -199,13 +295,20 @@ async function handleTextMessage(
 ): Promise<void> {
   const text = message.text ?? '';
   const chatId = message.chat.id;
-  const userName = message.from?.first_name ?? 'User';
+  const telegramUser = message.from;
+
+  if (!telegramUser) return;
 
   // Command handling
   if (text.startsWith('/')) {
-    await handleCommand(text, chatId, env);
+    await handleCommand(text, chatId, telegramUser, env);
     return;
   }
+
+  // Get or create user and their current project
+  const user = await getOrCreateUser(env, telegramUser);
+  const project = await getCurrentProject(env, user.id);
+  const userName = user.firstName ?? 'User';
 
   // Parse as expense
   try {
@@ -215,8 +318,10 @@ async function handleTextMessage(
     // Check card strategy
     const strategyResult = checkCardStrategy(parsed);
 
-    // Get default participants
-    const participants = env.DEFAULT_PARTICIPANTS?.split(',') ?? [userName, 'Sherry'];
+    // Get participants from project members
+    const participants = project
+      ? await getProjectMembers(env, project.id)
+      : [userName, 'Sherry'];
 
     // Parse any split modifiers from the text
     const splitMods = parseNaturalLanguageSplit(text, participants);
@@ -230,20 +335,21 @@ async function handleTextMessage(
       excludedParticipants: splitMods.excludedParticipants,
     });
 
-    // Save pending transaction to D1
+    // Save pending transaction to D1 with project_id
     const txId = crypto.randomUUID();
-    const userId = message.from?.id ?? 0;
     await env.DB.prepare(`
-      INSERT INTO transactions (id, user_id, chat_id, merchant, amount, currency, category, card_last_four, payer, is_shared, splits, status, created_at)
-      VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'pending', ?)
+      INSERT INTO transactions (id, project_id, user_id, chat_id, merchant, amount, currency, category, location, card_last_four, payer, is_shared, splits, status, created_at)
+      VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'pending', ?)
     `).bind(
       txId,
-      userId,
+      project?.id ?? 'default',
+      user.id,
       chatId,
       parsed.merchant,
       parsed.amount,
       parsed.currency,
       parsed.category,
+      project?.defaultLocation ?? null,
       parsed.cardLastFour || null,
       userName,
       1,
@@ -252,8 +358,11 @@ async function handleTextMessage(
     ).run();
 
     // Build response message
-    let response = `💳 *New Transaction*\n\n`;
-    response += `📍 ${parsed.merchant}\n`;
+    let response = `💳 *New Transaction*\n`;
+    if (project && project.id !== 'default') {
+      response += `📁 _${project.name}_\n`;
+    }
+    response += `\n📍 ${parsed.merchant}\n`;
     response += `💰 $${parsed.amount.toFixed(2)} ${parsed.currency}\n`;
     response += `🏷️ ${parsed.category}\n`;
     response += `📅 ${parsed.date}\n\n`;
@@ -307,15 +416,18 @@ async function handleTextMessage(
 async function handleCommand(
   text: string,
   chatId: number,
+  telegramUser: TelegramUser,
   env: Env
 ): Promise<void> {
   const [command, ...args] = text.split(' ');
+  const user = await getOrCreateUser(env, telegramUser);
+  const project = await getCurrentProject(env, user.id);
 
   switch (command) {
     case '/start':
       await sendMessage(
         chatId,
-        `👋 Welcome to FinTrack AI!\n\nYour Chat ID: \`${chatId}\`\n\nJust send me your expenses in natural language:\n\n• "dinner 50 at Sushi Place"\n• "Costco 150"\n• "uber 25 USD"\n\nI'll parse, categorize, and check your card strategy automatically.`,
+        `👋 Welcome to FinTrack AI!\n\n📁 Current project: *${project?.name ?? 'Daily'}*\n\nJust send me your expenses:\n• "dinner 50 at Sushi Place"\n• "Costco 150"\n• "uber 25 USD"\n\n*Project Commands:*\n/newproject <name> - Create project\n/join <code> - Join via invite\n/switch - Change project\n/projects - List projects\n/invite - Show invite code`,
         env.TELEGRAM_BOT_TOKEN,
         { parse_mode: 'Markdown' }
       );
@@ -324,24 +436,173 @@ async function handleCommand(
     case '/help':
       await sendMessage(
         chatId,
-        `*Commands:*\n/start - Welcome message\n/help - This help\n/balance - Show current balances\n/settle - Calculate settlements\n/history - Recent transactions\n/cards - Show configured cards\n\n*Expense format:*\nJust type naturally!\n"lunch 30 at McDonald's"\n"groceries 80 at Costco"\n"50 USD Amazon"`,
+        `*Commands:*\n/balance - Show balances\n/settle - Calculate settlements\n/history - Recent transactions\n/cards - Configured cards\n\n*Project Commands:*\n/newproject <name> - Create project\n/join <code> - Join via invite\n/switch - Change project\n/projects - List projects\n/invite - Show invite code\n\n*Expense format:*\nJust type naturally!\n"lunch 30 at McDonald's"\n"groceries 80 at Costco"`,
         env.TELEGRAM_BOT_TOKEN,
         { parse_mode: 'Markdown' }
       );
       break;
 
+    case '/newproject': {
+      const projectName = args.join(' ').replace(/"/g, '').trim();
+      if (!projectName) {
+        await sendMessage(chatId, '❌ Usage: /newproject "Project Name"', env.TELEGRAM_BOT_TOKEN);
+        break;
+      }
+
+      const projectId = crypto.randomUUID();
+      const inviteCode = generateInviteCode();
+
+      await env.DB.prepare(`
+        INSERT INTO projects (id, name, type, default_currency, invite_code, owner_id, created_at)
+        VALUES (?, ?, 'trip', 'CAD', ?, ?, ?)
+      `).bind(projectId, projectName, inviteCode, user.id, new Date().toISOString()).run();
+
+      // Add owner as member
+      await env.DB.prepare(`
+        INSERT INTO project_members (project_id, user_id, display_name, role, joined_at)
+        VALUES (?, ?, ?, 'owner', ?)
+      `).bind(projectId, user.id, user.firstName ?? 'User', new Date().toISOString()).run();
+
+      // Set as current project
+      await env.DB.prepare(
+        'UPDATE users SET current_project_id = ? WHERE id = ?'
+      ).bind(projectId, user.id).run();
+
+      await sendMessage(
+        chatId,
+        `✅ Created project *${projectName}*\n\n📎 Invite code: \`${inviteCode}\`\n\nShare this code with your group!`,
+        env.TELEGRAM_BOT_TOKEN,
+        { parse_mode: 'Markdown' }
+      );
+      break;
+    }
+
+    case '/join': {
+      const inviteCode = args[0]?.toUpperCase().trim();
+      if (!inviteCode) {
+        await sendMessage(chatId, '❌ Usage: /join <invite_code>', env.TELEGRAM_BOT_TOKEN);
+        break;
+      }
+
+      const projectToJoin = await env.DB.prepare(
+        'SELECT * FROM projects WHERE invite_code = ?'
+      ).bind(inviteCode).first();
+
+      if (!projectToJoin) {
+        await sendMessage(chatId, '❌ Invalid invite code.', env.TELEGRAM_BOT_TOKEN);
+        break;
+      }
+
+      // Check if already member
+      const existingMember = await env.DB.prepare(
+        'SELECT * FROM project_members WHERE project_id = ? AND user_id = ?'
+      ).bind(projectToJoin.id, user.id).first();
+
+      if (existingMember) {
+        await sendMessage(chatId, `ℹ️ You're already in *${projectToJoin.name}*`, env.TELEGRAM_BOT_TOKEN, { parse_mode: 'Markdown' });
+        break;
+      }
+
+      // Add as member
+      await env.DB.prepare(`
+        INSERT INTO project_members (project_id, user_id, display_name, role, joined_at)
+        VALUES (?, ?, ?, 'member', ?)
+      `).bind(projectToJoin.id, user.id, user.firstName ?? 'User', new Date().toISOString()).run();
+
+      // Set as current project
+      await env.DB.prepare(
+        'UPDATE users SET current_project_id = ? WHERE id = ?'
+      ).bind(projectToJoin.id, user.id).run();
+
+      const members = await getProjectMembers(env, projectToJoin.id as string);
+      await sendMessage(
+        chatId,
+        `✅ Joined *${projectToJoin.name}*!\n\nMembers: ${members.join(', ')}`,
+        env.TELEGRAM_BOT_TOKEN,
+        { parse_mode: 'Markdown' }
+      );
+      break;
+    }
+
+    case '/switch': {
+      // Get user's projects
+      const userProjects = await env.DB.prepare(`
+        SELECT p.* FROM projects p
+        JOIN project_members pm ON p.id = pm.project_id
+        WHERE pm.user_id = ? AND p.is_active = 1
+      `).bind(user.id).all();
+
+      if (!userProjects.results || userProjects.results.length === 0) {
+        await sendMessage(chatId, '📁 No projects found. Create one with /newproject', env.TELEGRAM_BOT_TOKEN);
+        break;
+      }
+
+      const keyboard = userProjects.results.map((p) => [{
+        text: `${p.id === project?.id ? '✓ ' : ''}${p.name}`,
+        callback_data: `switch_${p.id}`,
+      }]);
+
+      await sendMessage(chatId, '📁 *Select Project:*', env.TELEGRAM_BOT_TOKEN, {
+        parse_mode: 'Markdown',
+        reply_markup: { inline_keyboard: keyboard },
+      });
+      break;
+    }
+
+    case '/projects': {
+      const userProjects = await env.DB.prepare(`
+        SELECT p.*,
+          (SELECT COUNT(*) FROM project_members WHERE project_id = p.id) as member_count,
+          (SELECT COUNT(*) FROM transactions WHERE project_id = p.id AND status = 'confirmed') as tx_count
+        FROM projects p
+        JOIN project_members pm ON p.id = pm.project_id
+        WHERE pm.user_id = ? AND p.is_active = 1
+      `).bind(user.id).all();
+
+      if (!userProjects.results || userProjects.results.length === 0) {
+        await sendMessage(chatId, '📁 No projects. Create one with /newproject', env.TELEGRAM_BOT_TOKEN);
+        break;
+      }
+
+      let msg = '📁 *My Projects*\n\n';
+      for (const p of userProjects.results) {
+        const current = p.id === project?.id ? ' ← current' : '';
+        msg += `*${p.name}*${current}\n`;
+        msg += `  👥 ${p.member_count} members | 📝 ${p.tx_count} transactions\n`;
+        msg += `  📎 \`${p.invite_code}\`\n\n`;
+      }
+
+      await sendMessage(chatId, msg, env.TELEGRAM_BOT_TOKEN, { parse_mode: 'Markdown' });
+      break;
+    }
+
+    case '/invite': {
+      if (!project) {
+        await sendMessage(chatId, '❌ No current project.', env.TELEGRAM_BOT_TOKEN);
+        break;
+      }
+
+      await sendMessage(
+        chatId,
+        `📎 *${project.name}* invite code:\n\n\`${project.inviteCode}\`\n\nShare this with your group!`,
+        env.TELEGRAM_BOT_TOKEN,
+        { parse_mode: 'Markdown' }
+      );
+      break;
+    }
+
     case '/balance': {
-      // Fetch confirmed shared transactions (last 30 days, max 200)
+      const projectId = project?.id ?? 'default';
       const balanceRows = await env.DB.prepare(`
         SELECT * FROM transactions
-        WHERE chat_id = ? AND status = 'confirmed' AND is_shared = 1
+        WHERE project_id = ? AND status = 'confirmed' AND is_shared = 1
           AND created_at > datetime('now', '-30 days')
         ORDER BY created_at DESC
         LIMIT 200
-      `).bind(chatId).all();
+      `).bind(projectId).all();
 
       if (!balanceRows.results || balanceRows.results.length === 0) {
-        await sendMessage(chatId, '📊 No confirmed shared expenses yet.', env.TELEGRAM_BOT_TOKEN);
+        await sendMessage(chatId, `📊 No confirmed expenses in *${project?.name ?? 'Daily'}*`, env.TELEGRAM_BOT_TOKEN, { parse_mode: 'Markdown' });
         break;
       }
 
@@ -353,7 +614,7 @@ async function handleCommand(
         break;
       }
 
-      let balanceMsg = `📊 *Current Balances*\n\n`;
+      let balanceMsg = `📊 *${project?.name ?? 'Daily'} Balances*\n\n`;
       balances.forEach((b) => {
         const emoji = b.netBalance > 0 ? '💚' : '🔴';
         const status = b.netBalance > 0 ? 'is owed' : 'owes';
@@ -365,29 +626,29 @@ async function handleCommand(
     }
 
     case '/settle': {
-      // Fetch confirmed shared transactions (last 30 days, max 200)
+      const projectId = project?.id ?? 'default';
       const settleRows = await env.DB.prepare(`
         SELECT * FROM transactions
-        WHERE chat_id = ? AND status = 'confirmed' AND is_shared = 1
+        WHERE project_id = ? AND status = 'confirmed' AND is_shared = 1
           AND created_at > datetime('now', '-30 days')
         ORDER BY created_at DESC
         LIMIT 200
-      `).bind(chatId).all();
+      `).bind(projectId).all();
 
       if (!settleRows.results || settleRows.results.length === 0) {
-        await sendMessage(chatId, '💸 No confirmed shared expenses to settle.', env.TELEGRAM_BOT_TOKEN);
+        await sendMessage(chatId, `💸 No expenses to settle in *${project?.name ?? 'Daily'}*`, env.TELEGRAM_BOT_TOKEN, { parse_mode: 'Markdown' });
         break;
       }
 
       const txns = settleRows.results.map((row) => rowToTransaction(row as Record<string, unknown>));
-      const settlements = simplifyDebts(txns, 'CAD');
+      const settlements = simplifyDebts(txns, project?.defaultCurrency ?? 'CAD');
 
       if (settlements.length === 0) {
         await sendMessage(chatId, '💸 All settled! No payments needed.', env.TELEGRAM_BOT_TOKEN);
         break;
       }
 
-      let settleMsg = `💸 *Settlement Summary*\n\n`;
+      let settleMsg = `💸 *${project?.name ?? 'Daily'} Settlement*\n\n`;
       settleMsg += formatSettlements(settlements);
 
       await sendMessage(chatId, settleMsg, env.TELEGRAM_BOT_TOKEN, { parse_mode: 'Markdown' });
@@ -395,20 +656,20 @@ async function handleCommand(
     }
 
     case '/history': {
-      // Fetch recent transactions (last 10)
+      const projectId = project?.id ?? 'default';
       const historyRows = await env.DB.prepare(`
         SELECT * FROM transactions
-        WHERE chat_id = ? AND status IN ('confirmed', 'personal')
+        WHERE project_id = ? AND status IN ('confirmed', 'personal')
         ORDER BY created_at DESC
         LIMIT 10
-      `).bind(chatId).all();
+      `).bind(projectId).all();
 
       if (!historyRows.results || historyRows.results.length === 0) {
-        await sendMessage(chatId, '📜 No transaction history yet.', env.TELEGRAM_BOT_TOKEN);
+        await sendMessage(chatId, `📜 No history in *${project?.name ?? 'Daily'}*`, env.TELEGRAM_BOT_TOKEN, { parse_mode: 'Markdown' });
         break;
       }
 
-      let historyMsg = `📜 *Recent Transactions*\n\n`;
+      let historyMsg = `📜 *${project?.name ?? 'Daily'} History*\n\n`;
       historyRows.results.forEach((row: Record<string, unknown>) => {
         const date = new Date(row.created_at as string).toLocaleDateString('en-CA');
         const status = row.status === 'personal' ? '👤' : '✅';
@@ -502,6 +763,29 @@ async function handleCallbackQuery(
         env.TELEGRAM_BOT_TOKEN
       );
       break;
+
+    case 'switch': {
+      // Switch to selected project
+      const projectId = txId; // txId is actually the project ID here
+      const userId = query.from.id;
+
+      await env.DB.prepare(
+        'UPDATE users SET current_project_id = ? WHERE id = ?'
+      ).bind(projectId, userId).run();
+
+      const switchedProject = await env.DB.prepare(
+        'SELECT name FROM projects WHERE id = ?'
+      ).bind(projectId).first();
+
+      await editMessageText(
+        query.message?.chat.id ?? 0,
+        query.message?.message_id ?? 0,
+        `📁 Switched to *${switchedProject?.name ?? 'project'}*`,
+        env.TELEGRAM_BOT_TOKEN,
+        { parse_mode: 'Markdown' }
+      );
+      break;
+    }
   }
 }
 
