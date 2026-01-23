@@ -14,6 +14,7 @@ import {
   PRESET_CARDS,
   getCardById,
   recommendCard,
+  detectForeignByLocation,
   formatRecommendation,
   formatBenefits,
   formatCardSuggestion,
@@ -410,8 +411,12 @@ async function handleTextMessage(
 
     // Get user's cards for recommendation
     const userCards = await getUserCards(env, user.id);
-    const isForeign = parsed.currency !== 'CAD';
-    const cardRec = recommendCard(parsed, userCards, isForeign);
+    const foreignCheck = detectForeignByLocation(location ?? undefined, parsed.currency);
+    const cardRec = recommendCard(parsed, userCards, foreignCheck.isForeign);
+    // Add location-based currency warning if detected
+    if (foreignCheck.warning && !cardRec.best.warning) {
+      cardRec.best.warning = foreignCheck.warning;
+    }
 
     // Build response message
     let response = `💳 *New Transaction*\n`;

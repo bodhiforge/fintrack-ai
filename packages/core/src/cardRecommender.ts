@@ -37,6 +37,50 @@ export interface CardSuggestion {
 }
 
 // ============================================
+// Location-based Currency Detection
+// ============================================
+
+const LOCATION_CURRENCY: Record<string, string> = {
+  // Japan
+  'tokyo': 'JPY', 'osaka': 'JPY', 'kyoto': 'JPY', 'japan': 'JPY', '东京': 'JPY', '日本': 'JPY',
+  // USA
+  'new york': 'USD', 'nyc': 'USD', 'los angeles': 'USD', 'la': 'USD', 'usa': 'USD', 'seattle': 'USD',
+  'san francisco': 'USD', 'sf': 'USD', 'vegas': 'USD', 'las vegas': 'USD', 'hawaii': 'USD',
+  // Europe
+  'london': 'GBP', 'uk': 'GBP', 'england': 'GBP',
+  'paris': 'EUR', 'france': 'EUR', 'germany': 'EUR', 'berlin': 'EUR', 'italy': 'EUR', 'rome': 'EUR',
+  'spain': 'EUR', 'barcelona': 'EUR', 'amsterdam': 'EUR', 'netherlands': 'EUR',
+  // Mexico / Central America
+  'mexico': 'MXN', 'cancun': 'MXN', 'mexico city': 'MXN',
+  'costa rica': 'CRC', 'san jose': 'CRC',
+  // Asia
+  'hong kong': 'HKD', 'hk': 'HKD', '香港': 'HKD',
+  'singapore': 'SGD', '新加坡': 'SGD',
+  'korea': 'KRW', 'seoul': 'KRW', '韩国': 'KRW',
+  'thailand': 'THB', 'bangkok': 'THB',
+};
+
+export function detectForeignByLocation(location: string | undefined, currency: string): {
+  isForeign: boolean;
+  warning?: string;
+} {
+  if (!location) return { isForeign: currency !== 'CAD' };
+
+  const normalizedLocation = location.toLowerCase().trim();
+  const expectedCurrency = LOCATION_CURRENCY[normalizedLocation];
+
+  // If location suggests a foreign country but currency is CAD
+  if (expectedCurrency && expectedCurrency !== 'CAD' && currency === 'CAD') {
+    return {
+      isForeign: true,
+      warning: `${location} usually uses ${expectedCurrency}, treating as foreign`,
+    };
+  }
+
+  return { isForeign: currency !== 'CAD' };
+}
+
+// ============================================
 // Merchant Restriction Detection
 // ============================================
 

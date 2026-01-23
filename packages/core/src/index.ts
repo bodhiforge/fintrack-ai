@@ -36,6 +36,7 @@ export {
 export * from './cards.js';
 export {
   recommendCard,
+  detectForeignByLocation,
   formatRecommendation,
   formatBenefits,
   formatCardSuggestion,
