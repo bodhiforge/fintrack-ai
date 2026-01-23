@@ -83,11 +83,6 @@ export type Category =
   | 'entertainment'
   | 'health'
   | 'utilities'
-  | 'streaming'
-  | 'costco'
-  | 'foreign'
-  | 'usd'
-  | 'recurring'
   | 'other';
 
 // ============================================
@@ -97,7 +92,7 @@ export type Category =
 export interface CardStrategy {
   cardName: string;
   lastFourDigits: string;
-  bestFor: Category[];
+  bestFor: string[]; // Categories + special tags like 'foreign', 'costco'
   multiplier: string;
   foreignTxFee?: number; // percentage, e.g., 2.5
   notes?: string;

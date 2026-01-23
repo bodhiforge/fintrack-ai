@@ -321,6 +321,12 @@ async function handleTextMessage(
     return;
   }
 
+  // Validate input
+  const trimmedText = text.trim();
+  if (!trimmedText || trimmedText.length < 2) {
+    return; // Ignore empty or very short messages
+  }
+
   // Parse as expense
   try {
     const parser = new TransactionParser(env.OPENAI_API_KEY);
@@ -329,10 +335,14 @@ async function handleTextMessage(
     // Check card strategy
     const strategyResult = checkCardStrategy(parsed);
 
+    // Get payer's display name from project membership
+    const membership = await env.DB.prepare(
+      'SELECT display_name FROM project_members WHERE project_id = ? AND user_id = ?'
+    ).bind(project.id, user.id).first();
+    const payerName = (membership?.display_name as string) ?? userName;
+
     // Get participants from project members
-    const participants = project
-      ? await getProjectMembers(env, project.id)
-      : [userName, 'Sherry'];
+    const participants = await getProjectMembers(env, project.id);
 
     // Parse any split modifiers from the text
     const splitMods = parseNaturalLanguageSplit(text, participants);
@@ -341,21 +351,21 @@ async function handleTextMessage(
     const splitResult = splitExpense({
       totalAmount: parsed.amount,
       currency: parsed.currency,
-      payer: userName,
+      payer: payerName,
       participants,
       excludedParticipants: splitMods.excludedParticipants,
     });
 
     // Save pending transaction to D1 with project_id
     // Use parsed location if available, otherwise fall back to project default
-    const location = parsed.location ?? project?.defaultLocation ?? null;
+    const location = parsed.location ?? project.defaultLocation ?? null;
     const txId = crypto.randomUUID();
     await env.DB.prepare(`
       INSERT INTO transactions (id, project_id, user_id, chat_id, merchant, amount, currency, category, location, card_last_four, payer, is_shared, splits, status, created_at)
       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'pending', ?)
     `).bind(
       txId,
-      project?.id ?? 'default',
+      project.id,
       user.id,
       chatId,
       parsed.merchant,
@@ -364,7 +374,7 @@ async function handleTextMessage(
       parsed.category,
       location,
       parsed.cardLastFour || null,
-      userName,
+      payerName,
       1,
       JSON.stringify(splitResult.shares),
       new Date().toISOString()
@@ -372,7 +382,7 @@ async function handleTextMessage(
 
     // Build response message
     let response = `💳 *New Transaction*\n`;
-    if (project && project.id !== 'default') {
+    if (project) {
       response += `📁 _${project.name}_\n`;
     }
     response += `\n📍 ${parsed.merchant}`;
@@ -1158,7 +1168,7 @@ async function handleCallbackQuery(
       await editMessageText(
         query.message?.chat.id ?? 0,
         query.message?.message_id ?? 0,
-        query.message?.text + '\n\n✅ *Confirmed*',
+        (query.message?.text ?? '') + '\n\n✅ *Confirmed*',
         env.TELEGRAM_BOT_TOKEN,
         { parse_mode: 'Markdown' }
       );
@@ -1173,7 +1183,7 @@ async function handleCallbackQuery(
       await editMessageText(
         query.message?.chat.id ?? 0,
         query.message?.message_id ?? 0,
-        query.message?.text + '\n\n👤 *Marked as personal*',
+        (query.message?.text ?? '') + '\n\n👤 *Marked as personal*',
         env.TELEGRAM_BOT_TOKEN,
         { parse_mode: 'Markdown' }
       );
