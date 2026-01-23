@@ -209,12 +209,37 @@ fintrack-ai/
     └── screenshots/
 ```
 
+## Status
+
+🚧 **Work in Progress** — Core architecture complete, pending deployment and real-world testing.
+
+| Component | Code | Unit Tests | Deployed | E2E Verified |
+|-----------|------|------------|----------|--------------|
+| core/parser | ✅ | ⏳ | - | ❌ |
+| core/strategy | ✅ | ✅ | - | - |
+| core/splitter | ✅ | ✅ | - | - |
+| telegram-bot | ✅ | ❌ | ❌ | ❌ |
+| gmail-worker | ✅ | ❌ | ❌ | ❌ |
+
 ## Roadmap
 
-- [x] Core parsing logic
-- [x] Credit card strategy engine
-- [x] Telegram bot integration
-- [x] Gmail webhook integration
+**Phase 1: Foundation** ✅
+- [x] TypeScript monorepo setup (pnpm workspace)
+- [x] Core business logic implementation
+- [x] Unit tests for splitter & strategy
+
+**Phase 2: Deployment** 🚧
+- [ ] Deploy Telegram bot to Cloudflare Workers
+- [ ] Deploy Gmail worker to Cloudflare Workers
+- [ ] Create Telegram Bot via BotFather
+- [ ] Configure bank email forwarding
+
+**Phase 3: Validation**
+- [ ] Test with real bank emails (Amex, TD, RBC)
+- [ ] End-to-end transaction flow
+- [ ] Partner onboarding
+
+**Phase 4: Enhancements**
 - [ ] Multi-currency with live rates
 - [ ] Apple Shortcuts integration
 - [ ] Receipt OCR (photo → transaction)
