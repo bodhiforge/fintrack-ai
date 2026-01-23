@@ -37,6 +37,28 @@ export interface CardSuggestion {
 }
 
 // ============================================
+// Merchant Restriction Detection
+// ============================================
+
+interface MerchantRestriction {
+  pattern: RegExp;
+  allowedNetworks: string[];
+  reason: string;
+}
+
+const MERCHANT_RESTRICTIONS: MerchantRestriction[] = [
+  {
+    pattern: /costco|wholesale/i,
+    allowedNetworks: ['mastercard', 'visa'],  // Costco doesn't accept Amex
+    reason: 'Costco only accepts Mastercard/Visa',
+  },
+];
+
+function checkMerchantRestrictions(merchant: string): MerchantRestriction | undefined {
+  return MERCHANT_RESTRICTIONS.find(r => r.pattern.test(merchant));
+}
+
+// ============================================
 // Main Recommendation Function
 // ============================================
 
@@ -55,14 +77,44 @@ export function recommendCard(
     };
   }
 
-  // Calculate reward for each user card
-  const recommendations = userCards
-    .filter(uc => uc.card)
+  // Check for merchant restrictions (e.g., Costco doesn't accept Amex)
+  const restriction = checkMerchantRestrictions(transaction.merchant);
+  let eligibleCards = userCards.filter(uc => uc.card);
+  let restrictionWarning: string | undefined;
+
+  if (restriction) {
+    const filtered = eligibleCards.filter(uc =>
+      restriction.allowedNetworks.includes(uc.card.network)
+    );
+    if (filtered.length > 0) {
+      eligibleCards = filtered;
+      restrictionWarning = restriction.reason;
+    }
+  }
+
+  // Calculate reward for each eligible card
+  const recommendations = eligibleCards
     .map(userCard => calculateRecommendation(transaction, userCard, isForeign))
     .sort((a, b) => b.rewardValue - a.rewardValue);
 
+  if (recommendations.length === 0) {
+    // All cards filtered out by restriction
+    const emptyRec = createEmptyRecommendation();
+    emptyRec.warning = restriction?.reason;
+    return {
+      best: emptyRec,
+      alternatives: [],
+      missingCardSuggestion: suggestCardForMerchant(transaction.merchant),
+    };
+  }
+
   const best = recommendations[0];
   const alternatives = recommendations.slice(1, 3);
+
+  // Add restriction warning to best card
+  if (restrictionWarning) {
+    best.warning = restrictionWarning;
+  }
 
   // Mark if best is actually optimal
   if (alternatives.length > 0) {
@@ -73,7 +125,7 @@ export function recommendCard(
   }
 
   // Check if user is missing a better card for this category
-  const missingCardSuggestion = checkMissingCard(transaction, userCards, best);
+  const missingCardSuggestion = checkMissingCard(transaction, userCards, best, restriction);
 
   return {
     best,
@@ -165,14 +217,17 @@ function getRelevantBenefits(
 function checkMissingCard(
   transaction: ParsedTransaction,
   userCards: UserCardWithDetails[],
-  currentBest: CardRecommendation
+  currentBest: CardRecommendation,
+  restriction?: { allowedNetworks: string[] }
 ): CardSuggestion | undefined {
   const category = transaction.category;
   const userCardIds = new Set(userCards.map(uc => uc.cardId));
 
   // Find the best card for this category that user doesn't have
+  // Respect merchant restrictions
   const bestAvailable = PRESET_CARDS
     .filter(c => !userCardIds.has(c.id))
+    .filter(c => !restriction || restriction.allowedNetworks.includes(c.network))
     .map(card => {
       const rule = card.rewards.find(r => r.category === category) ??
                    card.rewards.find(r => r.category === 'all');
@@ -194,6 +249,18 @@ function checkMissingCard(
     reason: getCategorySuggestionReason(category),
     potentialSavings: `~$${monthlyExtra.toFixed(0)}/month extra rewards`,
   };
+}
+
+function suggestCardForMerchant(merchant: string): CardSuggestion | undefined {
+  // Suggest cards based on merchant
+  if (/costco|wholesale/i.test(merchant)) {
+    return {
+      card: getCardById('rogers-we-mc') ?? PRESET_CARDS[0],
+      reason: 'Costco only accepts Mastercard. Rogers WE MC is best for Costco.',
+      potentialSavings: '1.5% cashback + No FX fee',
+    };
+  }
+  return undefined;
 }
 
 function suggestCardForCategory(category: Category): CardSuggestion {
@@ -249,6 +316,11 @@ function createEmptyRecommendation(): CardRecommendation {
 
 export function formatRecommendation(rec: CardRecommendation): string {
   let msg = '';
+
+  // Show warning first if any (e.g., Costco restriction)
+  if (rec.warning) {
+    msg += `⚠️ _${rec.warning}_\n\n`;
+  }
 
   if (rec.isOptimal) {
     msg += `✅ *Use ${rec.card.name}*\n`;

@@ -71,6 +71,7 @@ export interface CardRecommendation {
   extraReward?: string;            // If not optimal, what they're missing
   extraRewardValue?: number;
   relevantBenefits: CardBenefit[];
+  warning?: string;                // e.g., "Costco only accepts Mastercard/Visa"
 }
 
 // ============================================

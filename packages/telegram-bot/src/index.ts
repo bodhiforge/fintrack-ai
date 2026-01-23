@@ -6,8 +6,6 @@
 import {
   TransactionParser,
   splitExpense,
-  checkCardStrategy,
-  formatStrategyResult,
   parseNaturalLanguageSplit,
   calculateBalances,
   simplifyDebts,
@@ -365,9 +363,6 @@ async function handleTextMessage(
     const parser = new TransactionParser(env.OPENAI_API_KEY);
     const { parsed, confidence, warnings } = await parser.parseNaturalLanguage(text);
 
-    // Check card strategy
-    const strategyResult = checkCardStrategy(parsed);
-
     // Get payer's display name from project membership
     const membership = await env.DB.prepare(
       'SELECT display_name FROM project_members WHERE project_id = ? AND user_id = ?'
@@ -445,8 +440,8 @@ async function handleTextMessage(
         response += formatBenefits(cardRec.best.relevantBenefits);
       }
     } else {
-      // Legacy strategy result for users without cards set up
-      response += `\n${formatStrategyResult(strategyResult)}`;
+      // Prompt user to add cards
+      response += `\n💳 _Add your cards with /cards to see rewards_`;
     }
 
     // Suggest better card if missing
@@ -1162,26 +1157,37 @@ async function handleCommand(
     }
 
     case '/addcard': {
-      // Show card categories to choose from
+      // Show all cards directly - simpler UX
+      const userCards = await getUserCards(env, user.id);
+      const existingCardIds = new Set(userCards.map(uc => uc.cardId));
+
+      // Filter out cards user already has
+      const availableCards = PRESET_CARDS.filter(c => !existingCardIds.has(c.id));
+
+      if (availableCards.length === 0) {
+        await sendMessage(chatId, '✅ You have all available cards added!', env.TELEGRAM_BOT_TOKEN);
+        break;
+      }
+
+      // Build keyboard - 2 cards per row
+      const keyboard: Array<Array<{ text: string; callback_data: string }>> = [];
+      availableCards.forEach((card, i) => {
+        const btn = { text: card.name, callback_data: `cadd_${card.id}` };
+        if (i % 2 === 0) {
+          keyboard.push([btn]);
+        } else {
+          keyboard[keyboard.length - 1].push(btn);
+        }
+      });
+      keyboard.push([{ text: '⬅️ Cancel', callback_data: 'card_cancel' }]);
+
       await sendMessage(
         chatId,
-        `➕ *Add a Card*\n\nSelect a card type:`,
+        `➕ *Add a Card*\n\nTap to add:`,
         env.TELEGRAM_BOT_TOKEN,
         {
           parse_mode: 'Markdown',
-          reply_markup: {
-            inline_keyboard: [
-              [
-                { text: '🍽️ Dining/Grocery', callback_data: 'card_cat_dining' },
-                { text: '✈️ Travel', callback_data: 'card_cat_travel' },
-              ],
-              [
-                { text: '🌍 No FX Fee', callback_data: 'card_cat_nofx' },
-                { text: '💵 Cashback', callback_data: 'card_cat_cashback' },
-              ],
-              [{ text: '📋 Browse All', callback_data: 'card_browse' }],
-            ],
-          },
+          reply_markup: { inline_keyboard: keyboard },
         }
       );
       break;
