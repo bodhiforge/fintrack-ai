@@ -1,0 +1,21 @@
+{
+  "name": "@fintrack-ai/gmail-worker",
+  "version": "0.1.0",
+  "description": "Gmail webhook processor for FinTrack AI",
+  "type": "module",
+  "main": "dist/index.js",
+  "scripts": {
+    "dev": "wrangler dev",
+    "build": "tsc",
+    "deploy": "wrangler deploy",
+    "typecheck": "tsc --noEmit"
+  },
+  "dependencies": {
+    "@fintrack-ai/core": "workspace:*"
+  },
+  "devDependencies": {
+    "@cloudflare/workers-types": "^4.20231218.0",
+    "typescript": "^5.3.0",
+    "wrangler": "^3.22.0"
+  }
+}
