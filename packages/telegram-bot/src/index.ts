@@ -311,6 +311,16 @@ async function handleTextMessage(
   const project = await getCurrentProject(env, user.id);
   const userName = user.firstName ?? 'User';
 
+  // Check if user has a project
+  if (!project) {
+    await sendMessage(
+      chatId,
+      `📁 No project selected.\n\nCreate one with /new or join with /join`,
+      env.TELEGRAM_BOT_TOKEN
+    );
+    return;
+  }
+
   // Parse as expense
   try {
     const parser = new TransactionParser(env.OPENAI_API_KEY);
@@ -433,28 +443,51 @@ async function handleCommand(
     case '/start':
     case '/menu':
     case '/m':
-      await sendMessage(
-        chatId,
-        `📁 *${project?.name ?? 'Daily'}*\n\nSend a message to track expenses, or tap a button:`,
-        env.TELEGRAM_BOT_TOKEN,
-        {
-          parse_mode: 'Markdown',
-          reply_markup: {
-            inline_keyboard: [
-              [
-                { text: '📊 Balance', callback_data: 'menu_balance' },
-                { text: '💸 Settle', callback_data: 'menu_settle' },
-                { text: '📜 History', callback_data: 'menu_history' },
+      if (project) {
+        await sendMessage(
+          chatId,
+          `📁 *${project.name}*\n\nSend a message to track expenses, or tap a button:`,
+          env.TELEGRAM_BOT_TOKEN,
+          {
+            parse_mode: 'Markdown',
+            reply_markup: {
+              inline_keyboard: [
+                [
+                  { text: '📊 Balance', callback_data: 'menu_balance' },
+                  { text: '💸 Settle', callback_data: 'menu_settle' },
+                  { text: '📜 History', callback_data: 'menu_history' },
+                ],
+                [
+                  { text: '📁 Projects', callback_data: 'menu_projects' },
+                  { text: '💳 Cards', callback_data: 'menu_cards' },
+                  { text: '❓ Help', callback_data: 'menu_help' },
+                ],
               ],
-              [
-                { text: '📁 Projects', callback_data: 'menu_projects' },
-                { text: '💳 Cards', callback_data: 'menu_cards' },
-                { text: '❓ Help', callback_data: 'menu_help' },
+            },
+          }
+        );
+      } else {
+        await sendMessage(
+          chatId,
+          `📁 *No Project*\n\nCreate or join a project to start tracking:`,
+          env.TELEGRAM_BOT_TOKEN,
+          {
+            parse_mode: 'Markdown',
+            reply_markup: {
+              inline_keyboard: [
+                [
+                  { text: '➕ New Project', callback_data: 'proj_new' },
+                  { text: '🔗 Join Project', callback_data: 'proj_join' },
+                ],
+                [
+                  { text: '📋 My Projects', callback_data: 'proj_list' },
+                  { text: '❓ Help', callback_data: 'menu_help' },
+                ],
               ],
-            ],
-          },
-        }
-      );
+            },
+          }
+        );
+      }
       break;
 
     case '/help':
@@ -619,11 +652,6 @@ async function handleCommand(
         break;
       }
 
-      if (project.id === 'default') {
-        await sendMessage(chatId, '❌ Cannot invite to the default project.', env.TELEGRAM_BOT_TOKEN);
-        break;
-      }
-
       if (project.ownerId !== user.id) {
         await sendMessage(chatId, '❌ Only the project owner can generate invite codes.', env.TELEGRAM_BOT_TOKEN);
         break;
@@ -648,8 +676,8 @@ async function handleCommand(
     }
 
     case '/leave': {
-      if (!project || project.id === 'default') {
-        await sendMessage(chatId, '❌ Cannot leave the default project.', env.TELEGRAM_BOT_TOKEN);
+      if (!project) {
+        await sendMessage(chatId, '❌ No current project.', env.TELEGRAM_BOT_TOKEN);
         break;
       }
 
@@ -664,14 +692,14 @@ async function handleCommand(
         'DELETE FROM project_members WHERE project_id = ? AND user_id = ?'
       ).bind(project.id, user.id).run();
 
-      // Switch to default project
+      // Clear current project
       await env.DB.prepare(
-        'UPDATE users SET current_project_id = ? WHERE id = ?'
-      ).bind('default', user.id).run();
+        'UPDATE users SET current_project_id = NULL WHERE id = ?'
+      ).bind(user.id).run();
 
       await sendMessage(
         chatId,
-        `👋 Left *${project.name}*. Switched to Daily.`,
+        `👋 Left *${project.name}*.\n\nUse /p to see your projects or /new to create one.`,
         env.TELEGRAM_BOT_TOKEN,
         { parse_mode: 'Markdown' }
       );
@@ -679,8 +707,8 @@ async function handleCommand(
     }
 
     case '/archive': {
-      if (!project || project.id === 'default') {
-        await sendMessage(chatId, '❌ Cannot archive the default project.', env.TELEGRAM_BOT_TOKEN);
+      if (!project) {
+        await sendMessage(chatId, '❌ No current project.', env.TELEGRAM_BOT_TOKEN);
         break;
       }
 
@@ -695,9 +723,9 @@ async function handleCommand(
         'UPDATE projects SET is_active = 0 WHERE id = ?'
       ).bind(project.id).run();
 
-      // Switch all members to default
+      // Clear current project for all members
       await env.DB.prepare(`
-        UPDATE users SET current_project_id = 'default'
+        UPDATE users SET current_project_id = NULL
         WHERE current_project_id = ?
       `).bind(project.id).run();
 
@@ -760,8 +788,8 @@ async function handleCommand(
 
     case '/deleteproject':
     case '/delproj': {
-      if (!project || project.id === 'default') {
-        await sendMessage(chatId, '❌ Cannot delete the default project.', env.TELEGRAM_BOT_TOKEN);
+      if (!project) {
+        await sendMessage(chatId, '❌ No current project.', env.TELEGRAM_BOT_TOKEN);
         break;
       }
 
@@ -786,9 +814,9 @@ async function handleCommand(
       await env.DB.prepare('DELETE FROM transactions WHERE project_id = ?').bind(project.id).run();
       await env.DB.prepare('DELETE FROM project_members WHERE project_id = ?').bind(project.id).run();
 
-      // Switch all members to default first
+      // Clear current project for all members
       await env.DB.prepare(`
-        UPDATE users SET current_project_id = 'default' WHERE current_project_id = ?
+        UPDATE users SET current_project_id = NULL WHERE current_project_id = ?
       `).bind(project.id).run();
 
       // Delete project
@@ -810,8 +838,8 @@ async function handleCommand(
         break;
       }
 
-      if (!project || project.id === 'default') {
-        await sendMessage(chatId, '❌ Cannot rename the default project.', env.TELEGRAM_BOT_TOKEN);
+      if (!project) {
+        await sendMessage(chatId, '❌ No current project.', env.TELEGRAM_BOT_TOKEN);
         break;
       }
 
@@ -1272,25 +1300,21 @@ async function handleCallbackQuery(
             await sendMessage(chatId, '❌ No project selected.', env.TELEGRAM_BOT_TOKEN);
             break;
           }
-          const isDefault = project.id === 'default';
-          const keyboard = [
-            [
-              { text: '📍 Set Location', callback_data: 'set_location' },
-              { text: '💱 Set Currency', callback_data: 'set_currency' },
-            ],
-          ];
-          // Only show rename/delete for non-default projects
-          if (!isDefault) {
-            keyboard.push([
-              { text: '✏️ Rename', callback_data: 'set_rename' },
-              { text: '🗑️ Delete', callback_data: 'set_delete' },
-            ]);
-          }
-          keyboard.push([{ text: '⬅️ Back', callback_data: 'menu_projects' }]);
-
           await sendMessage(chatId, `⚙️ *${project.name} Settings*\n\n📍 Location: ${project.defaultLocation ?? 'Not set'}\n💱 Currency: ${project.defaultCurrency}`, env.TELEGRAM_BOT_TOKEN, {
             parse_mode: 'Markdown',
-            reply_markup: { inline_keyboard: keyboard },
+            reply_markup: {
+              inline_keyboard: [
+                [
+                  { text: '📍 Set Location', callback_data: 'set_location' },
+                  { text: '💱 Set Currency', callback_data: 'set_currency' },
+                ],
+                [
+                  { text: '✏️ Rename', callback_data: 'set_rename' },
+                  { text: '🗑️ Delete', callback_data: 'set_delete' },
+                ],
+                [{ text: '⬅️ Back', callback_data: 'menu_projects' }],
+              ],
+            },
           });
           break;
         }
