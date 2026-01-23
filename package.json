@@ -1,0 +1,35 @@
+{
+  "name": "fintrack-ai",
+  "version": "0.1.0",
+  "description": "Proactive expense tracking powered by AI",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "dev": "pnpm -r dev",
+    "build": "pnpm -r build",
+    "test": "pnpm -r test",
+    "lint": "eslint packages --ext .ts",
+    "typecheck": "pnpm -r typecheck",
+    "deploy": "pnpm -r deploy"
+  },
+  "keywords": [
+    "expense-tracker",
+    "ai",
+    "telegram-bot",
+    "cloudflare-workers",
+    "credit-card-rewards"
+  ],
+  "author": "",
+  "license": "MIT",
+  "devDependencies": {
+    "@types/node": "^20.10.0",
+    "eslint": "^8.55.0",
+    "prettier": "^3.1.0",
+    "typescript": "^5.3.0",
+    "vitest": "^1.0.0"
+  },
+  "engines": {
+    "node": ">=18"
+  },
+  "packageManager": "pnpm@8.12.0"
+}
