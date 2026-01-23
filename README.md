@@ -213,8 +213,8 @@ fintrack-ai/
 
 - [x] Core parsing logic
 - [x] Credit card strategy engine
-- [ ] Telegram bot integration
-- [ ] Gmail webhook integration
+- [x] Telegram bot integration
+- [x] Gmail webhook integration
 - [ ] Multi-currency with live rates
 - [ ] Apple Shortcuts integration
 - [ ] Receipt OCR (photo → transaction)
