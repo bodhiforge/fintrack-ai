@@ -425,24 +425,44 @@ async function handleCommand(
 
   switch (command) {
     case '/start':
+    case '/menu':
+    case '/m':
       await sendMessage(
         chatId,
-        `👋 Welcome to FinTrack AI!\n\n📁 Current project: *${project?.name ?? 'Daily'}*\n\nJust send me your expenses:\n• "dinner 50 at Sushi Place"\n• "Costco 150"\n• "uber 25 USD"\n\n*Project Commands:*\n/newproject <name> - Create project\n/join <code> - Join via invite\n/switch - Change project\n/projects - List projects\n/invite - Show invite code`,
+        `📁 *${project?.name ?? 'Daily'}*\n\n直接发消息记账，或点击下方按钮：`,
         env.TELEGRAM_BOT_TOKEN,
-        { parse_mode: 'Markdown' }
+        {
+          parse_mode: 'Markdown',
+          reply_markup: {
+            inline_keyboard: [
+              [
+                { text: '📊 余额', callback_data: 'menu_balance' },
+                { text: '💸 结算', callback_data: 'menu_settle' },
+                { text: '📜 历史', callback_data: 'menu_history' },
+              ],
+              [
+                { text: '📁 项目', callback_data: 'menu_projects' },
+                { text: '💳 卡片', callback_data: 'menu_cards' },
+                { text: '❓ 帮助', callback_data: 'menu_help' },
+              ],
+            ],
+          },
+        }
       );
       break;
 
     case '/help':
+    case '/h':
       await sendMessage(
         chatId,
-        `*Commands:*\n/balance - Show balances\n/settle - Calculate settlements\n/history - Recent transactions\n/cards - Configured cards\n\n*Project Commands:*\n/newproject <name> - Create project\n/join <code> - Join via invite\n/switch - Change project\n/projects - List projects\n/invite - Show invite code\n/leave - Leave current project\n/archive - Archive project (owner)\n/rename <name> - Rename project (owner)\n\n*Expense format:*\nJust type naturally!\n"lunch 30 at McDonald's"\n"groceries 80 at Costco"`,
+        `*快捷命令:*\n/m - 主菜单\n/b - 余额\n/s - 结算\n/h - 历史\n/p - 项目\n\n*项目管理:*\n/new <名称> - 新建项目\n/join <邀请码> - 加入项目\n\n*记账:*\n直接发消息！\n"午饭 50 麦当劳"\n"Costco 150"`,
         env.TELEGRAM_BOT_TOKEN,
         { parse_mode: 'Markdown' }
       );
       break;
 
-    case '/newproject': {
+    case '/newproject':
+    case '/new': {
       const projectName = args.join(' ').replace(/"/g, '').trim();
       if (!projectName) {
         await sendMessage(chatId, '❌ Usage: /newproject "Project Name"', env.TELEGRAM_BOT_TOKEN);
@@ -549,7 +569,8 @@ async function handleCommand(
       break;
     }
 
-    case '/projects': {
+    case '/projects':
+    case '/p': {
       const userProjects = await env.DB.prepare(`
         SELECT p.*,
           (SELECT COUNT(*) FROM project_members WHERE project_id = p.id) as member_count,
@@ -690,7 +711,8 @@ async function handleCommand(
       break;
     }
 
-    case '/balance': {
+    case '/balance':
+    case '/b': {
       const projectId = project?.id ?? 'default';
       const balanceRows = await env.DB.prepare(`
         SELECT * FROM transactions
@@ -724,7 +746,8 @@ async function handleCommand(
       break;
     }
 
-    case '/settle': {
+    case '/settle':
+    case '/s': {
       const projectId = project?.id ?? 'default';
       const settleRows = await env.DB.prepare(`
         SELECT * FROM transactions
@@ -754,7 +777,8 @@ async function handleCommand(
       break;
     }
 
-    case '/history': {
+    case '/history':
+    case '/hi': {
       const projectId = project?.id ?? 'default';
       const historyRows = await env.DB.prepare(`
         SELECT * FROM transactions
@@ -862,6 +886,83 @@ async function handleCallbackQuery(
         env.TELEGRAM_BOT_TOKEN
       );
       break;
+
+    // Menu callbacks - redirect to command handlers
+    case 'menu': {
+      const chatId = query.message?.chat.id ?? 0;
+      const telegramUser = query.from;
+      const subAction = txId; // txId is actually the sub-action here
+
+      // Simulate command execution
+      switch (subAction) {
+        case 'balance':
+          await handleCommand('/b', chatId, telegramUser, env);
+          break;
+        case 'settle':
+          await handleCommand('/s', chatId, telegramUser, env);
+          break;
+        case 'history':
+          await handleCommand('/hi', chatId, telegramUser, env);
+          break;
+        case 'cards':
+          await handleCommand('/cards', chatId, telegramUser, env);
+          break;
+        case 'help':
+          await handleCommand('/h', chatId, telegramUser, env);
+          break;
+        case 'projects':
+          // Show project sub-menu
+          await sendMessage(chatId, '📁 *项目管理*', env.TELEGRAM_BOT_TOKEN, {
+            parse_mode: 'Markdown',
+            reply_markup: {
+              inline_keyboard: [
+                [
+                  { text: '📋 我的项目', callback_data: 'proj_list' },
+                  { text: '🔄 切换', callback_data: 'proj_switch' },
+                ],
+                [
+                  { text: '➕ 新建', callback_data: 'proj_new' },
+                  { text: '🔗 加入', callback_data: 'proj_join' },
+                ],
+                [
+                  { text: '📎 邀请码', callback_data: 'proj_invite' },
+                  { text: '⬅️ 返回', callback_data: 'proj_back' },
+                ],
+              ],
+            },
+          });
+          break;
+      }
+      break;
+    }
+
+    case 'proj': {
+      const chatId = query.message?.chat.id ?? 0;
+      const telegramUser = query.from;
+      const subAction = txId;
+
+      switch (subAction) {
+        case 'list':
+          await handleCommand('/p', chatId, telegramUser, env);
+          break;
+        case 'switch':
+          await handleCommand('/switch', chatId, telegramUser, env);
+          break;
+        case 'invite':
+          await handleCommand('/invite', chatId, telegramUser, env);
+          break;
+        case 'new':
+          await sendMessage(chatId, '发送命令创建项目：\n`/new 项目名称`', env.TELEGRAM_BOT_TOKEN, { parse_mode: 'Markdown' });
+          break;
+        case 'join':
+          await sendMessage(chatId, '发送命令加入项目：\n`/join 邀请码`', env.TELEGRAM_BOT_TOKEN, { parse_mode: 'Markdown' });
+          break;
+        case 'back':
+          await handleCommand('/m', chatId, telegramUser, env);
+          break;
+      }
+      break;
+    }
 
     case 'switch': {
       // Switch to selected project
