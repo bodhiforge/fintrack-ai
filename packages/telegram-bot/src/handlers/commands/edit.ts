@@ -88,25 +88,26 @@ export async function handleEditSplit(context: CommandHandlerContext): Promise<v
     return;
   }
 
-  let newSplits: Record<string, number> = {};
+  const newSplits: Readonly<Record<string, number>> = await (async () => {
+    if (splitText.toLowerCase() === 'equal') {
+      const members = project != null
+        ? await getProjectMembers(environment, project.id)
+        : [user.firstName ?? 'User', 'Sherry'];
+      const share = (transaction.amount as number) / members.length;
+      return Object.fromEntries(
+        [...members].map(member => [member, Math.round(share * 100) / 100])
+      );
+    }
 
-  if (splitText.toLowerCase() === 'equal') {
-    const members = project != null
-      ? await getProjectMembers(environment, project.id)
-      : [user.firstName ?? 'User', 'Sherry'];
-    const share = (transaction.amount as number) / members.length;
-    members.forEach(member => {
-      newSplits[member] = Math.round(share * 100) / 100;
-    });
-  } else {
     const parts = splitText.split(',').map(p => p.trim());
-    parts.forEach(part => {
+    return parts.reduce<Record<string, number>>((accumulator, part) => {
       const match = part.match(/^(.+?)\s+([\d.]+)$/);
       if (match != null) {
-        newSplits[match[1].trim()] = parseFloat(match[2]);
+        return { ...accumulator, [match[1].trim()]: parseFloat(match[2]) };
       }
-    });
-  }
+      return accumulator;
+    }, {});
+  })();
 
   if (Object.keys(newSplits).length === 0) {
     await sendMessage(

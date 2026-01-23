@@ -165,6 +165,28 @@ export async function handleTextMessage(
     const splitLines = Object.entries(splitResult.shares)
       .map(([person, share]) => `  ${person}: $${share.toFixed(2)}`);
 
+    const cardSection = userCards.length > 0
+      ? [
+          '',
+          formatRecommendation(cardRecommendation.best),
+          ...(cardRecommendation.best.relevantBenefits.length > 0
+            ? [formatBenefits(cardRecommendation.best.relevantBenefits)]
+            : []),
+        ]
+      : ['', '💳 _Add your cards with /cards to see rewards_'];
+
+    const suggestionSection = cardRecommendation.missingCardSuggestion != null
+      ? ['', `💡 _${cardRecommendation.missingCardSuggestion.reason}_`]
+      : [];
+
+    const warningsSection = warnings != null && warnings.length > 0
+      ? ['', `⚠️ ${warnings.join(', ')}`]
+      : [];
+
+    const confidenceSection = confidence < 1
+      ? ['', `_Confidence: ${(confidence * 100).toFixed(0)}%_`]
+      : [];
+
     const responseParts = [
       `💳 *New Transaction*`,
       `📁 _${project.name}_`,
@@ -176,28 +198,11 @@ export async function handleTextMessage(
       '',
       '*Split:*',
       ...splitLines,
+      ...cardSection,
+      ...suggestionSection,
+      ...warningsSection,
+      ...confidenceSection,
     ];
-
-    if (userCards.length > 0) {
-      responseParts.push('', formatRecommendation(cardRecommendation.best));
-      if (cardRecommendation.best.relevantBenefits.length > 0) {
-        responseParts.push(formatBenefits(cardRecommendation.best.relevantBenefits));
-      }
-    } else {
-      responseParts.push('', '💳 _Add your cards with /cards to see rewards_');
-    }
-
-    if (cardRecommendation.missingCardSuggestion != null) {
-      responseParts.push('', `💡 _${cardRecommendation.missingCardSuggestion.reason}_`);
-    }
-
-    if (warnings != null && warnings.length > 0) {
-      responseParts.push('', `⚠️ ${warnings.join(', ')}`);
-    }
-
-    if (confidence < 1) {
-      responseParts.push('', `_Confidence: ${(confidence * 100).toFixed(0)}%_`);
-    }
 
     await sendMessage(chatId, responseParts.join('\n'), environment.TELEGRAM_BOT_TOKEN, {
       parse_mode: 'Markdown',

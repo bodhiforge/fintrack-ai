@@ -17,24 +17,22 @@ export async function getUserCards(
     return [];
   }
 
-  const results: UserCardWithDetails[] = [];
-
-  for (const row of rows.results) {
+  return rows.results.flatMap(row => {
     const record = row as Record<string, unknown>;
     const card = getCardById(record.card_id as string);
-    if (card != null) {
-      results.push({
-        id: record.id as string,
-        odId: record.user_id as number,
-        cardId: record.card_id as string,
-        lastFour: record.last_four as string | undefined,
-        nickname: record.nickname as string | undefined,
-        isActive: record.is_active === 1,
-        addedAt: record.added_at as string,
-        card,
-      });
+    if (card == null) {
+      return [];
     }
-  }
-
-  return results;
+    const userCard: UserCardWithDetails = {
+      id: record.id as string,
+      odId: record.user_id as number,
+      cardId: record.card_id as string,
+      lastFour: record.last_four as string | undefined,
+      nickname: record.nickname as string | undefined,
+      isActive: record.is_active === 1,
+      addedAt: record.added_at as string,
+      card,
+    };
+    return [userCard];
+  });
 }

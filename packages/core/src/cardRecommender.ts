@@ -360,22 +360,21 @@ function createEmptyRecommendation(): CardRecommendation {
 // ============================================
 
 export function formatRecommendation(recommendation: CardRecommendation): string {
-  const parts: string[] = [];
+  const warningLine = recommendation.warning != null
+    ? [`⚠️ _${recommendation.warning}_\n`]
+    : [];
 
-  // Show warning first if any (e.g., Costco restriction)
-  if (recommendation.warning != null) {
-    parts.push(`⚠️ _${recommendation.warning}_\n`);
-  }
+  const cardLines = recommendation.isOptimal
+    ? [
+        `✅ *Use ${recommendation.card.name}*`,
+        `💰 Earn ${recommendation.reward}`,
+      ]
+    : [
+        `⚠️ *Consider ${recommendation.card.name}*`,
+        `💰 Could earn ${recommendation.reward}`,
+      ];
 
-  if (recommendation.isOptimal) {
-    parts.push(`✅ *Use ${recommendation.card.name}*`);
-    parts.push(`💰 Earn ${recommendation.reward}`);
-  } else {
-    parts.push(`⚠️ *Consider ${recommendation.card.name}*`);
-    parts.push(`💰 Could earn ${recommendation.reward}`);
-  }
-
-  return parts.join('\n');
+  return [...warningLine, ...cardLines].join('\n');
 }
 
 export function formatBenefits(benefits: readonly CardBenefit[]): string {
@@ -385,11 +384,11 @@ export function formatBenefits(benefits: readonly CardBenefit[]): string {
     const emoji = benefit.type === 'insurance' ? '🛡️' :
                   benefit.type === 'lounge' ? '✈️' :
                   benefit.type === 'credit' ? '💵' : '🎁';
-    const lines = [`  ${emoji} ${benefit.name}`];
-    if (benefit.conditions != null) {
-      lines.push(`     _${benefit.conditions}_`);
-    }
-    return lines;
+    const mainLine = `  ${emoji} ${benefit.name}`;
+    const conditionLine = benefit.conditions != null
+      ? [`     _${benefit.conditions}_`]
+      : [];
+    return [mainLine, ...conditionLine];
   });
 
   return [
@@ -403,7 +402,17 @@ export function formatCardSuggestion(suggestion: CardSuggestion): string {
   const topBenefits = suggestion.card.benefits.slice(0, 2);
   const benefitLines = topBenefits.map(benefit => `• ${benefit.name}`);
 
-  const parts = [
+  const referralSection = suggestion.card.referralUrl != null
+    ? [
+        '',
+        suggestion.card.referralBonus != null
+          ? `👉 [Apply now](${suggestion.card.referralUrl}) - ${suggestion.card.referralBonus}`
+          : `👉 [Apply now](${suggestion.card.referralUrl})`,
+        '_This may include a referral bonus_',
+      ]
+    : [];
+
+  return [
     '',
     `💡 *${suggestion.reason}*`,
     '',
@@ -411,14 +420,6 @@ export function formatCardSuggestion(suggestion: CardSuggestion): string {
     ...benefitLines,
     '',
     suggestion.potentialSavings,
-  ];
-
-  if (suggestion.card.referralUrl != null) {
-    const referralText = suggestion.card.referralBonus != null
-      ? `👉 [Apply now](${suggestion.card.referralUrl}) - ${suggestion.card.referralBonus}`
-      : `👉 [Apply now](${suggestion.card.referralUrl})`;
-    parts.push('', referralText, '_This may include a referral bonus_');
-  }
-
-  return parts.join('\n');
+    ...referralSection,
+  ].join('\n');
 }

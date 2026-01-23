@@ -12,6 +12,13 @@ const CATEGORIES = [
   'travel', 'transport', 'entertainment', 'health', 'utilities', 'other',
 ] as const;
 
+function chunkArray<T>(array: readonly T[], size: number): T[][] {
+  return Array.from(
+    { length: Math.ceil(array.length / size) },
+    (_, index) => array.slice(index * size, (index + 1) * size) as T[]
+  );
+}
+
 export async function handleEditCallbacks(
   query: CallbackQuery,
   idPart: string,
@@ -40,17 +47,11 @@ export async function handleEditCallbacks(
   }
 
   if (field === 'cat') {
-    const keyboard: Array<Array<{ text: string; callback_data: string }>> = [];
-
-    CATEGORIES.forEach((category, index) => {
-      if (index % 3 === 0) {
-        keyboard.push([]);
-      }
-      keyboard[keyboard.length - 1].push({
-        text: category,
-        callback_data: `txc_${category}_${transactionId}`,
-      });
-    });
+    const categoryButtons = CATEGORIES.map(category => ({
+      text: category,
+      callback_data: `txc_${category}_${transactionId}`,
+    }));
+    const keyboard = chunkArray(categoryButtons, 3);
 
     await sendMessage(chatId, '🏷️ Select category:', environment.TELEGRAM_BOT_TOKEN, {
       reply_markup: { inline_keyboard: keyboard },
