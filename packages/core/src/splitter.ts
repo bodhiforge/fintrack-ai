@@ -291,8 +291,8 @@ export function convertCurrency(
 
   // Rates are "1 unit of currency = X CAD"
   // e.g., rate[USD] = 1.35 means 1 USD = 1.35 CAD
-  const fromRate = rates[fromCurrency] || 1;
-  const toRate = rates[toCurrency] || 1;
+  const fromRate = rates[fromCurrency] ?? 1;
+  const toRate = rates[toCurrency] ?? 1;
 
   // Convert: amount in fromCurrency -> CAD -> toCurrency
   // 100 USD * 1.35 = 135 CAD, 135 CAD / 1 = 135 CAD

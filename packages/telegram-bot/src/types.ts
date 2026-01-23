@@ -7,12 +7,13 @@
 // ============================================
 
 export interface Environment {
-  OPENAI_API_KEY: string;
-  TELEGRAM_BOT_TOKEN: string;
-  TELEGRAM_WEBHOOK_SECRET?: string;
-  TELEGRAM_CHAT_ID?: string;
-  DEFAULT_PARTICIPANTS?: string;
-  DB: D1Database;
+  readonly OPENAI_API_KEY: string;
+  readonly TELEGRAM_BOT_TOKEN: string;
+  readonly TELEGRAM_WEBHOOK_SECRET?: string;
+  readonly TELEGRAM_CHAT_ID?: string;
+  readonly DEFAULT_PARTICIPANTS?: string;
+  readonly ALLOWED_USERS?: string;
+  readonly DB: D1Database;
 }
 
 // ============================================

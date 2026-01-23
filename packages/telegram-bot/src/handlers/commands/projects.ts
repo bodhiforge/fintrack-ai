@@ -314,19 +314,29 @@ export async function handleDeleteProject(context: CommandHandlerContext): Promi
     return;
   }
 
-  await environment.DB.prepare('DELETE FROM transactions WHERE project_id = ?').bind(project.id).run();
-  await environment.DB.prepare('DELETE FROM project_members WHERE project_id = ?').bind(project.id).run();
-  await environment.DB.prepare(`
-    UPDATE users SET current_project_id = NULL WHERE current_project_id = ?
-  `).bind(project.id).run();
-  await environment.DB.prepare('DELETE FROM projects WHERE id = ?').bind(project.id).run();
+  try {
+    // Use batch to ensure atomicity
+    await environment.DB.batch([
+      environment.DB.prepare('DELETE FROM transactions WHERE project_id = ?').bind(project.id),
+      environment.DB.prepare('DELETE FROM project_members WHERE project_id = ?').bind(project.id),
+      environment.DB.prepare('UPDATE users SET current_project_id = NULL WHERE current_project_id = ?').bind(project.id),
+      environment.DB.prepare('DELETE FROM projects WHERE id = ?').bind(project.id),
+    ]);
 
-  await sendMessage(
-    chatId,
-    `🗑️ Deleted *${project.name}*`,
-    environment.TELEGRAM_BOT_TOKEN,
-    { parse_mode: 'Markdown' }
-  );
+    await sendMessage(
+      chatId,
+      `🗑️ Deleted *${project.name}*`,
+      environment.TELEGRAM_BOT_TOKEN,
+      { parse_mode: 'Markdown' }
+    );
+  } catch (error) {
+    console.error('Failed to delete project:', error);
+    await sendMessage(
+      chatId,
+      '❌ Failed to delete project. Please try again.',
+      environment.TELEGRAM_BOT_TOKEN
+    );
+  }
 }
 
 export async function handleRename(context: CommandHandlerContext): Promise<void> {

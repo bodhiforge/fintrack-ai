@@ -158,9 +158,9 @@ export async function handleTextMessage(
     const foreignCheck = detectForeignByLocation(location ?? undefined, parsed.currency);
     const cardRecommendation = recommendCard(parsed, [...userCards], foreignCheck.isForeign);
 
-    if (foreignCheck.warning != null && cardRecommendation.best.warning == null) {
-      (cardRecommendation.best as { warning?: string }).warning = foreignCheck.warning;
-    }
+    const bestRecommendation = foreignCheck.warning != null && cardRecommendation.best.warning == null
+      ? { ...cardRecommendation.best, warning: foreignCheck.warning }
+      : cardRecommendation.best;
 
     const splitLines = Object.entries(splitResult.shares)
       .map(([person, share]) => `  ${person}: $${share.toFixed(2)}`);
@@ -168,9 +168,9 @@ export async function handleTextMessage(
     const cardSection = userCards.length > 0
       ? [
           '',
-          formatRecommendation(cardRecommendation.best),
-          ...(cardRecommendation.best.relevantBenefits.length > 0
-            ? [formatBenefits(cardRecommendation.best.relevantBenefits)]
+          formatRecommendation(bestRecommendation),
+          ...(bestRecommendation.relevantBenefits.length > 0
+            ? [formatBenefits(bestRecommendation.relevantBenefits)]
             : []),
         ]
       : ['', '💳 _Add your cards with /cards to see rewards_'];

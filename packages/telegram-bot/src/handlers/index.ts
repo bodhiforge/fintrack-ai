@@ -11,10 +11,15 @@ import { handleCallbackQuery } from './callbacks/index.js';
 // Access Control
 // ============================================
 
-const ALLOWED_USERS: readonly number[] = [
-  7511659357,  // Bodhi
-  5347556412,  // Sherry
-];
+function getAllowedUsers(environment: Environment): readonly number[] {
+  if (environment.ALLOWED_USERS == null || environment.ALLOWED_USERS === '') {
+    return [];
+  }
+  return environment.ALLOWED_USERS
+    .split(',')
+    .map(id => parseInt(id.trim(), 10))
+    .filter(id => !isNaN(id));
+}
 
 // ============================================
 // Main Update Handler
@@ -25,8 +30,9 @@ export async function handleUpdate(
   environment: Environment
 ): Promise<void> {
   const userId = update.message?.from?.id ?? update.callback_query?.from?.id;
+  const allowedUsers = getAllowedUsers(environment);
 
-  if (userId != null && !ALLOWED_USERS.includes(userId)) {
+  if (allowedUsers.length > 0 && userId != null && !allowedUsers.includes(userId)) {
     const chatId = update.message?.chat.id ?? update.callback_query?.message?.chat.id;
     if (chatId != null) {
       await sendMessage(chatId, '🔒 Sorry, this is a private bot.', environment.TELEGRAM_BOT_TOKEN);

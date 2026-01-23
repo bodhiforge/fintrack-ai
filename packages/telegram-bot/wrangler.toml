@@ -9,6 +9,7 @@ ENVIRONMENT = "production"
 # OPENAI_API_KEY
 # TELEGRAM_BOT_TOKEN
 # TELEGRAM_WEBHOOK_SECRET
+# ALLOWED_USERS (comma-separated user IDs, e.g., "123456,789012")
 
 [[d1_databases]]
 binding = "DB"

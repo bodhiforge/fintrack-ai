@@ -103,9 +103,26 @@ export async function handleCardCallbacks(
     });
   } else if (subAction.startsWith('rm_')) {
     const cardIdPrefix = subAction.replace('rm_', '');
+
+    // Validate: must be valid UUID prefix (8+ hex chars with optional dashes)
+    if (cardIdPrefix.length < 8 || !/^[a-f0-9-]+$/i.test(cardIdPrefix)) {
+      await sendMessage(chatId, '❌ Invalid card ID.', environment.TELEGRAM_BOT_TOKEN);
+      return;
+    }
+
+    // Use exact match on the full ID by looking up first
+    const cardToDelete = await environment.DB.prepare(
+      'SELECT id FROM user_cards WHERE user_id = ? AND id LIKE ?'
+    ).bind(userId, `${cardIdPrefix}%`).first();
+
+    if (cardToDelete == null) {
+      await sendMessage(chatId, '❌ Card not found.', environment.TELEGRAM_BOT_TOKEN);
+      return;
+    }
+
     await environment.DB.prepare(
-      'DELETE FROM user_cards WHERE user_id = ? AND id LIKE ?'
-    ).bind(userId, `${cardIdPrefix}%`).run();
+      'DELETE FROM user_cards WHERE user_id = ? AND id = ?'
+    ).bind(userId, cardToDelete.id).run();
 
     await editMessageText(
       chatId,
