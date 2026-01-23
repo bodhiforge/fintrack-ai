@@ -45,6 +45,11 @@ export type Category =
   | 'entertainment'
   | 'health'
   | 'utilities'
+  | 'streaming'
+  | 'costco'
+  | 'foreign'
+  | 'usd'
+  | 'recurring'
   | 'other';
 
 // ============================================

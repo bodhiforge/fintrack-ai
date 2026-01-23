@@ -71,6 +71,32 @@ export default {
       return new Response('OK', { status: 200 });
     }
 
+    // Debug endpoint - test sending a message
+    if (url.pathname === '/debug') {
+      const hasToken = !!env.TELEGRAM_BOT_TOKEN;
+      const hasOpenAI = !!env.OPENAI_API_KEY;
+      const chatId = env.TELEGRAM_CHAT_ID || '7511659357';
+
+      let result = `Token: ${hasToken}, OpenAI: ${hasOpenAI}, ChatID: ${chatId}\n`;
+
+      try {
+        const resp = await fetch(`https://api.telegram.org/bot${env.TELEGRAM_BOT_TOKEN}/sendMessage`, {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({
+            chat_id: chatId,
+            text: '🔧 Debug: Worker is working!',
+          }),
+        });
+        const data = await resp.json();
+        result += `Telegram response: ${JSON.stringify(data)}`;
+      } catch (e) {
+        result += `Error: ${e}`;
+      }
+
+      return new Response(result, { status: 200 });
+    }
+
     // Webhook endpoint
     if (url.pathname === '/webhook' && request.method === 'POST') {
       try {
