@@ -9,6 +9,12 @@ import {
   checkCardStrategy,
   formatStrategyResult,
   parseNaturalLanguageSplit,
+  calculateBalances,
+  simplifyDebts,
+  formatSettlements,
+  type Transaction,
+  type Category,
+  type Currency,
 } from '@fintrack-ai/core';
 
 // ============================================
@@ -19,7 +25,9 @@ interface Env {
   OPENAI_API_KEY: string;
   TELEGRAM_BOT_TOKEN: string;
   TELEGRAM_WEBHOOK_SECRET?: string;
+  TELEGRAM_CHAT_ID?: string;
   DEFAULT_PARTICIPANTS?: string;
+  DB: D1Database;
 }
 
 interface TelegramUpdate {
@@ -128,7 +136,7 @@ export default {
 
 const ALLOWED_USERS = [
   7511659357,  // Bodhi
-  5347556412,  // Partner
+  5347556412,  // Sherry
 ];
 
 // ============================================
@@ -187,7 +195,7 @@ async function handleTextMessage(
     const strategyResult = checkCardStrategy(parsed);
 
     // Get default participants
-    const participants = env.DEFAULT_PARTICIPANTS?.split(',') ?? [userName, 'Partner'];
+    const participants = env.DEFAULT_PARTICIPANTS?.split(',') ?? [userName, 'Sherry'];
 
     // Parse any split modifiers from the text
     const splitMods = parseNaturalLanguageSplit(text, participants);
@@ -200,6 +208,27 @@ async function handleTextMessage(
       participants,
       excludedParticipants: splitMods.excludedParticipants,
     });
+
+    // Save pending transaction to D1
+    const txId = crypto.randomUUID();
+    const userId = message.from?.id ?? 0;
+    await env.DB.prepare(`
+      INSERT INTO transactions (id, user_id, chat_id, merchant, amount, currency, category, card_last_four, payer, is_shared, splits, status, created_at)
+      VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'pending', ?)
+    `).bind(
+      txId,
+      userId,
+      chatId,
+      parsed.merchant,
+      parsed.amount,
+      parsed.currency,
+      parsed.category,
+      parsed.cardLastFour || null,
+      userName,
+      1,
+      JSON.stringify(splitResult.shares),
+      new Date().toISOString()
+    ).run();
 
     // Build response message
     let response = `💳 *New Transaction*\n\n`;
@@ -224,18 +253,18 @@ async function handleTextMessage(
       response += `\n\n_Confidence: ${(confidence * 100).toFixed(0)}%_`;
     }
 
-    // Send with inline keyboard
+    // Send with inline keyboard (use txId for callbacks)
     await sendMessage(chatId, response, env.TELEGRAM_BOT_TOKEN, {
       parse_mode: 'Markdown',
       reply_markup: {
         inline_keyboard: [
           [
-            { text: '✅ Confirm', callback_data: `confirm_${Date.now()}` },
-            { text: '👤 Personal', callback_data: `personal_${Date.now()}` },
+            { text: '✅ Confirm', callback_data: `confirm_${txId}` },
+            { text: '👤 Personal', callback_data: `personal_${txId}` },
           ],
           [
-            { text: '✏️ Edit', callback_data: `edit_${Date.now()}` },
-            { text: '❌ Delete', callback_data: `delete_${Date.now()}` },
+            { text: '✏️ Edit', callback_data: `edit_${txId}` },
+            { text: '❌ Delete', callback_data: `delete_${txId}` },
           ],
         ],
       },
@@ -280,23 +309,91 @@ async function handleCommand(
       );
       break;
 
-    case '/balance':
-      // TODO: Fetch from storage and calculate balances
-      await sendMessage(
-        chatId,
-        '📊 Balance calculation coming soon!',
-        env.TELEGRAM_BOT_TOKEN
-      );
-      break;
+    case '/balance': {
+      // Fetch confirmed shared transactions
+      const balanceRows = await env.DB.prepare(`
+        SELECT * FROM transactions WHERE chat_id = ? AND status = 'confirmed' AND is_shared = 1
+      `).bind(chatId).all();
 
-    case '/settle':
-      // TODO: Calculate and display settlements
-      await sendMessage(
-        chatId,
-        '💸 Settlement calculation coming soon!',
-        env.TELEGRAM_BOT_TOKEN
-      );
+      if (!balanceRows.results || balanceRows.results.length === 0) {
+        await sendMessage(chatId, '📊 No confirmed shared expenses yet.', env.TELEGRAM_BOT_TOKEN);
+        break;
+      }
+
+      // Convert DB rows to Transaction objects
+      const transactions: Transaction[] = balanceRows.results.map((row: Record<string, unknown>) => ({
+        id: row.id as string,
+        date: row.created_at as string,
+        merchant: row.merchant as string,
+        amount: row.amount as number,
+        currency: row.currency as Currency,
+        category: row.category as Category,
+        cardLastFour: (row.card_last_four as string) || '',
+        payer: row.payer as string,
+        isShared: row.is_shared === 1,
+        splits: row.splits ? JSON.parse(row.splits as string) : {},
+        createdAt: row.created_at as string,
+        confirmedAt: row.confirmed_at as string,
+      }));
+
+      const balances = calculateBalances(transactions);
+
+      if (balances.length === 0) {
+        await sendMessage(chatId, '📊 All balanced! No one owes anything.', env.TELEGRAM_BOT_TOKEN);
+        break;
+      }
+
+      let balanceMsg = `📊 *Current Balances*\n\n`;
+      balances.forEach((b) => {
+        const emoji = b.netBalance > 0 ? '💚' : '🔴';
+        const status = b.netBalance > 0 ? 'is owed' : 'owes';
+        balanceMsg += `${emoji} ${b.person} ${status} $${Math.abs(b.netBalance).toFixed(2)}\n`;
+      });
+
+      await sendMessage(chatId, balanceMsg, env.TELEGRAM_BOT_TOKEN, { parse_mode: 'Markdown' });
       break;
+    }
+
+    case '/settle': {
+      // Fetch confirmed shared transactions
+      const settleRows = await env.DB.prepare(`
+        SELECT * FROM transactions WHERE chat_id = ? AND status = 'confirmed' AND is_shared = 1
+      `).bind(chatId).all();
+
+      if (!settleRows.results || settleRows.results.length === 0) {
+        await sendMessage(chatId, '💸 No confirmed shared expenses to settle.', env.TELEGRAM_BOT_TOKEN);
+        break;
+      }
+
+      // Convert DB rows to Transaction objects
+      const txns: Transaction[] = settleRows.results.map((row: Record<string, unknown>) => ({
+        id: row.id as string,
+        date: row.created_at as string,
+        merchant: row.merchant as string,
+        amount: row.amount as number,
+        currency: row.currency as Currency,
+        category: row.category as Category,
+        cardLastFour: (row.card_last_four as string) || '',
+        payer: row.payer as string,
+        isShared: row.is_shared === 1,
+        splits: row.splits ? JSON.parse(row.splits as string) : {},
+        createdAt: row.created_at as string,
+        confirmedAt: row.confirmed_at as string,
+      }));
+
+      const settlements = simplifyDebts(txns, 'CAD');
+
+      if (settlements.length === 0) {
+        await sendMessage(chatId, '💸 All settled! No payments needed.', env.TELEGRAM_BOT_TOKEN);
+        break;
+      }
+
+      let settleMsg = `💸 *Settlement Summary*\n\n`;
+      settleMsg += formatSettlements(settlements);
+
+      await sendMessage(chatId, settleMsg, env.TELEGRAM_BOT_TOKEN, { parse_mode: 'Markdown' });
+      break;
+    }
 
     case '/cards':
       await sendMessage(
@@ -325,14 +422,18 @@ async function handleCallbackQuery(
   env: Env
 ): Promise<void> {
   const data = query.data ?? '';
-  const [action] = data.split('_');
+  const [action, txId] = data.split('_');
 
   // Acknowledge the callback
   await answerCallbackQuery(query.id, env.TELEGRAM_BOT_TOKEN);
 
   switch (action) {
     case 'confirm':
-      // TODO: Save to storage
+      // Update transaction status to confirmed
+      await env.DB.prepare(`
+        UPDATE transactions SET status = 'confirmed', confirmed_at = ? WHERE id = ?
+      `).bind(new Date().toISOString(), txId).run();
+
       await editMessageText(
         query.message?.chat.id ?? 0,
         query.message?.message_id ?? 0,
@@ -343,7 +444,11 @@ async function handleCallbackQuery(
       break;
 
     case 'personal':
-      // TODO: Update split to personal
+      // Update to personal (not shared)
+      await env.DB.prepare(`
+        UPDATE transactions SET status = 'personal', is_shared = 0, splits = NULL, confirmed_at = ? WHERE id = ?
+      `).bind(new Date().toISOString(), txId).run();
+
       await editMessageText(
         query.message?.chat.id ?? 0,
         query.message?.message_id ?? 0,
@@ -354,6 +459,11 @@ async function handleCallbackQuery(
       break;
 
     case 'delete':
+      // Mark as deleted in database
+      await env.DB.prepare(`
+        UPDATE transactions SET status = 'deleted' WHERE id = ?
+      `).bind(txId).run();
+
       await deleteMessage(
         query.message?.chat.id ?? 0,
         query.message?.message_id ?? 0,
