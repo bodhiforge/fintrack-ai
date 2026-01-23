@@ -7,6 +7,41 @@ import type { CallbackQuery, Environment } from '../../types.js';
 import { sendMessage, editMessageText, deleteMessage } from '../../telegram/api.js';
 import { handleCommand } from '../commands/index.js';
 
+function chunkArray<T>(array: readonly T[], size: number): T[][] {
+  return Array.from(
+    { length: Math.ceil(array.length / size) },
+    (_, index) => array.slice(index * size, (index + 1) * size) as T[]
+  );
+}
+
+type CategoryConfig = Readonly<{
+  filter: (card: CreditCard) => boolean;
+  title: string;
+}>;
+
+const CATEGORY_CONFIGS: Readonly<Record<string, CategoryConfig>> = {
+  dining: {
+    filter: (card) =>
+      card.rewards.some(reward => reward.category === 'dining' || reward.category === 'grocery'),
+    title: '🍽️ Dining & Grocery Cards',
+  },
+  travel: {
+    filter: (card) =>
+      card.rewards.some(reward => reward.category === 'travel') ||
+      card.benefits.some(benefit => benefit.triggerCategories?.includes('travel')),
+    title: '✈️ Travel Cards',
+  },
+  nofx: {
+    filter: (card) => card.ftf === 0,
+    title: '🌍 No Foreign Transaction Fee',
+  },
+  cashback: {
+    filter: (card) =>
+      card.rewards.some(reward => reward.rewardType === 'cashback') || card.annualFee === 0,
+    title: '💵 Cashback & No Fee Cards',
+  },
+};
+
 export async function handleCardCallbacks(
   query: CallbackQuery,
   subAction: string,
@@ -23,15 +58,14 @@ export async function handleCardCallbacks(
       return `*${card.name}* - ${fee}\n  ${rewardText}`;
     });
 
-    const keyboard: Array<Array<{ text: string; callback_data: string }>> = [];
-    PRESET_CARDS.forEach((card, index) => {
-      if (index % 2 === 0) {
-        keyboard.push([{ text: card.name, callback_data: `cadd_${card.id}` }]);
-      } else {
-        keyboard[keyboard.length - 1].push({ text: card.name, callback_data: `cadd_${card.id}` });
-      }
-    });
-    keyboard.push([{ text: '⬅️ Back', callback_data: 'card_cancel' }]);
+    const cardButtons = PRESET_CARDS.map(card => ({
+      text: card.name,
+      callback_data: `cadd_${card.id}`,
+    }));
+    const keyboard = [
+      ...chunkArray(cardButtons, 2),
+      [{ text: '⬅️ Back', callback_data: 'card_cancel' }],
+    ];
 
     const message = [
       '📋 *Available Cards*',
@@ -49,42 +83,22 @@ export async function handleCardCallbacks(
     await deleteMessage(chatId, query.message?.message_id ?? 0, environment.TELEGRAM_BOT_TOKEN);
   } else if (subAction.startsWith('cat_')) {
     const category = subAction.replace('cat_', '');
-    let filteredCards: CreditCard[] = [];
-    let categoryTitle = '';
+    const config = CATEGORY_CONFIGS[category];
 
-    switch (category) {
-      case 'dining':
-        filteredCards = PRESET_CARDS.filter(card =>
-          card.rewards.some(reward => reward.category === 'dining' || reward.category === 'grocery')
-        );
-        categoryTitle = '🍽️ Dining & Grocery Cards';
-        break;
-      case 'travel':
-        filteredCards = PRESET_CARDS.filter(card =>
-          card.rewards.some(reward => reward.category === 'travel') ||
-          card.benefits.some(benefit => benefit.triggerCategories?.includes('travel'))
-        );
-        categoryTitle = '✈️ Travel Cards';
-        break;
-      case 'nofx':
-        filteredCards = PRESET_CARDS.filter(card => card.ftf === 0);
-        categoryTitle = '🌍 No Foreign Transaction Fee';
-        break;
-      case 'cashback':
-        filteredCards = PRESET_CARDS.filter(card =>
-          card.rewards.some(reward => reward.rewardType === 'cashback') || card.annualFee === 0
-        );
-        categoryTitle = '💵 Cashback & No Fee Cards';
-        break;
+    if (config == null) {
+      return;
     }
 
-    const keyboard = filteredCards.map(card => [{
-      text: card.name,
-      callback_data: `cadd_${card.id}`,
-    }]);
-    keyboard.push([{ text: '⬅️ Back', callback_data: 'card_add' }]);
+    const filteredCards = PRESET_CARDS.filter(config.filter);
+    const keyboard = [
+      ...filteredCards.map(card => [{
+        text: card.name,
+        callback_data: `cadd_${card.id}`,
+      }]),
+      [{ text: '⬅️ Back', callback_data: 'card_add' }],
+    ];
 
-    await sendMessage(chatId, `${categoryTitle}\n\nSelect a card to add:`, environment.TELEGRAM_BOT_TOKEN, {
+    await sendMessage(chatId, `${config.title}\n\nSelect a card to add:`, environment.TELEGRAM_BOT_TOKEN, {
       reply_markup: { inline_keyboard: keyboard },
     });
   } else if (subAction.startsWith('rm_')) {
@@ -139,16 +153,17 @@ export async function handleCardAddCallback(
     `  ${benefitEmoji(benefit.type)} ${benefit.name}`
   );
 
+  const benefitSection = benefitLines.length > 0
+    ? ['', '🎁 *Benefits:*', ...benefitLines]
+    : [];
+
   const messageParts = [
     `✅ Added *${card.name}*`,
     '',
     '💰 *Rewards:*',
     ...rewardLines,
+    ...benefitSection,
   ];
-
-  if (benefitLines.length > 0) {
-    messageParts.push('', '🎁 *Benefits:*', ...benefitLines);
-  }
 
   await editMessageText(
     chatId,

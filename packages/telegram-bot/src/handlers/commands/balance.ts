@@ -35,31 +35,31 @@ export async function handleBalance(context: CommandHandlerContext): Promise<voi
   );
 
   const byCurrency = groupTransactionsByCurrency(transactions);
-  const messageParts: string[] = [`📊 *${project?.name ?? 'Daily'} Balances*`];
-  let hasAnyBalance = false;
 
-  for (const [currency, currencyTransactions] of Object.entries(byCurrency)) {
+  const currencyBalanceLines = Object.entries(byCurrency).flatMap(([currency, currencyTransactions]) => {
     const balances = calculateBalances(currencyTransactions);
-    if (balances.length === 0) {
-      continue;
-    }
+    if (balances.length === 0) return [];
 
-    hasAnyBalance = true;
-    messageParts.push('', `*${currency}:*`);
-
-    balances.forEach((balance) => {
+    const balanceLines = balances.map(balance => {
       const emoji = balance.netBalance > 0 ? '💚' : '🔴';
       const status = balance.netBalance > 0 ? 'is owed' : 'owes';
-      messageParts.push(`${emoji} ${balance.person} ${status} $${Math.abs(balance.netBalance).toFixed(2)}`);
+      return `${emoji} ${balance.person} ${status} $${Math.abs(balance.netBalance).toFixed(2)}`;
     });
-  }
 
-  if (!hasAnyBalance) {
+    return ['', `*${currency}:*`, ...balanceLines];
+  });
+
+  if (currencyBalanceLines.length === 0) {
     await sendMessage(chatId, '📊 All balanced! No one owes anything.', environment.TELEGRAM_BOT_TOKEN);
     return;
   }
 
-  await sendMessage(chatId, messageParts.join('\n'), environment.TELEGRAM_BOT_TOKEN, { parse_mode: 'Markdown' });
+  const message = [
+    `📊 *${project?.name ?? 'Daily'} Balances*`,
+    ...currencyBalanceLines,
+  ].join('\n');
+
+  await sendMessage(chatId, message, environment.TELEGRAM_BOT_TOKEN, { parse_mode: 'Markdown' });
 }
 
 export async function handleSettle(context: CommandHandlerContext): Promise<void> {
@@ -89,25 +89,24 @@ export async function handleSettle(context: CommandHandlerContext): Promise<void
   );
 
   const byCurrency = groupTransactionsByCurrency(allTransactions);
-  const messageParts: string[] = [`💸 *${project?.name ?? 'Daily'} Settlement*`];
-  let hasAnySettlement = false;
 
-  for (const [currency, currencyTransactions] of Object.entries(byCurrency)) {
+  const settlementLines = Object.entries(byCurrency).flatMap(([currency, currencyTransactions]) => {
     const settlements = simplifyDebts(currencyTransactions, currency);
-    if (settlements.length === 0) {
-      continue;
-    }
+    if (settlements.length === 0) return [];
+    return ['', `*${currency}:*`, formatSettlements(settlements)];
+  });
 
-    hasAnySettlement = true;
-    messageParts.push('', `*${currency}:*`, formatSettlements(settlements));
-  }
-
-  if (!hasAnySettlement) {
+  if (settlementLines.length === 0) {
     await sendMessage(chatId, '💸 All settled! No payments needed.', environment.TELEGRAM_BOT_TOKEN);
     return;
   }
 
-  await sendMessage(chatId, messageParts.join('\n'), environment.TELEGRAM_BOT_TOKEN, { parse_mode: 'Markdown' });
+  const message = [
+    `💸 *${project?.name ?? 'Daily'} Settlement*`,
+    ...settlementLines,
+  ].join('\n');
+
+  await sendMessage(chatId, message, environment.TELEGRAM_BOT_TOKEN, { parse_mode: 'Markdown' });
 }
 
 export async function handleHistory(context: CommandHandlerContext): Promise<void> {

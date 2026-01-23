@@ -7,6 +7,13 @@ import type { CommandHandlerContext } from './index.js';
 import { sendMessage } from '../../telegram/api.js';
 import { getUserCards } from '../../db/index.js';
 
+function chunkArray<T>(array: readonly T[], size: number): T[][] {
+  return Array.from(
+    { length: Math.ceil(array.length / size) },
+    (_, index) => array.slice(index * size, (index + 1) * size) as T[]
+  );
+}
+
 export async function handleCards(context: CommandHandlerContext): Promise<void> {
   const { chatId, user, environment } = context;
 
@@ -72,16 +79,14 @@ export async function handleAddCard(context: CommandHandlerContext): Promise<voi
     return;
   }
 
-  const keyboard: Array<Array<{ text: string; callback_data: string }>> = [];
-  availableCards.forEach((card, index) => {
-    const button = { text: card.name, callback_data: `cadd_${card.id}` };
-    if (index % 2 === 0) {
-      keyboard.push([button]);
-    } else {
-      keyboard[keyboard.length - 1].push(button);
-    }
-  });
-  keyboard.push([{ text: '⬅️ Cancel', callback_data: 'card_cancel' }]);
+  const cardButtons = availableCards.map(card => ({
+    text: card.name,
+    callback_data: `cadd_${card.id}`,
+  }));
+  const keyboard = [
+    ...chunkArray(cardButtons, 2),
+    [{ text: '⬅️ Cancel', callback_data: 'card_cancel' }],
+  ];
 
   await sendMessage(
     chatId,
@@ -104,11 +109,13 @@ export async function handleRemoveCard(context: CommandHandlerContext): Promise<
     return;
   }
 
-  const keyboard = userCards.map(userCard => [{
-    text: `❌ ${userCard.nickname ?? userCard.card.name}`,
-    callback_data: `card_rm_${userCard.id.slice(0, 8)}`,
-  }]);
-  keyboard.push([{ text: '⬅️ Cancel', callback_data: 'card_cancel' }]);
+  const keyboard = [
+    ...userCards.map(userCard => [{
+      text: `❌ ${userCard.nickname ?? userCard.card.name}`,
+      callback_data: `card_rm_${userCard.id.slice(0, 8)}`,
+    }]),
+    [{ text: '⬅️ Cancel', callback_data: 'card_cancel' }],
+  ];
 
   await sendMessage(chatId, '➖ *Remove a Card*\n\nSelect card to remove:', environment.TELEGRAM_BOT_TOKEN, {
     parse_mode: 'Markdown',

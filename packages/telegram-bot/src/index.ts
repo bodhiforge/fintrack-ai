@@ -48,27 +48,29 @@ async function handleDebug(environment: Environment): Promise<Response> {
   const hasOpenAI = environment.OPENAI_API_KEY != null && environment.OPENAI_API_KEY !== '';
   const chatId = environment.TELEGRAM_CHAT_ID ?? '7511659357';
 
-  const resultParts = [`Token: ${hasToken}, OpenAI: ${hasOpenAI}, ChatID: ${chatId}`];
+  const statusLine = `Token: ${hasToken}, OpenAI: ${hasOpenAI}, ChatID: ${chatId}`;
 
-  try {
-    const response = await fetch(
-      `https://api.telegram.org/bot${environment.TELEGRAM_BOT_TOKEN}/sendMessage`,
-      {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({
-          chat_id: chatId,
-          text: '🔧 Debug: Worker is working!',
-        }),
-      }
-    );
-    const data = await response.json();
-    resultParts.push(`Telegram response: ${JSON.stringify(data)}`);
-  } catch (error) {
-    resultParts.push(`Error: ${error}`);
-  }
+  const telegramResult = await (async () => {
+    try {
+      const response = await fetch(
+        `https://api.telegram.org/bot${environment.TELEGRAM_BOT_TOKEN}/sendMessage`,
+        {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({
+            chat_id: chatId,
+            text: '🔧 Debug: Worker is working!',
+          }),
+        }
+      );
+      const data = await response.json();
+      return `Telegram response: ${JSON.stringify(data)}`;
+    } catch (error) {
+      return `Error: ${error}`;
+    }
+  })();
 
-  return new Response(resultParts.join('\n'), { status: 200 });
+  return new Response([statusLine, telegramResult].join('\n'), { status: 200 });
 }
 
 async function handleWebhook(

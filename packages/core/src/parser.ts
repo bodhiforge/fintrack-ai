@@ -185,26 +185,17 @@ export class TransactionParser {
   /**
    * Check for potential issues
    */
-  private checkWarnings(parsed: ParsedTransaction, originalInput: string): string[] {
-    const warnings: string[] = [];
+  private checkWarnings(parsed: ParsedTransaction, _originalInput: string): readonly string[] {
+    const warningChecks: ReadonlyArray<{ condition: boolean; message: string }> = [
+      { condition: parsed.amount <= 0, message: 'Amount is zero or negative' },
+      { condition: parsed.amount > 10000, message: 'Unusually large amount - please verify' },
+      { condition: parsed.merchant === 'Unknown', message: 'Could not identify merchant' },
+      { condition: parsed.cardLastFour === 'unknown', message: 'Card number not detected' },
+    ];
 
-    if (parsed.amount <= 0) {
-      warnings.push('Amount is zero or negative');
-    }
-
-    if (parsed.amount > 10000) {
-      warnings.push('Unusually large amount - please verify');
-    }
-
-    if (parsed.merchant === 'Unknown') {
-      warnings.push('Could not identify merchant');
-    }
-
-    if (parsed.cardLastFour === 'unknown') {
-      warnings.push('Card number not detected');
-    }
-
-    return warnings;
+    return warningChecks
+      .filter(check => check.condition)
+      .map(check => check.message);
   }
 }
 
