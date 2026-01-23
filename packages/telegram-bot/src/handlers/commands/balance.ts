@@ -170,6 +170,75 @@ export async function handleHistory(context: CommandHandlerContext): Promise<voi
   await sendMessage(chatId, message, environment.TELEGRAM_BOT_TOKEN, { parse_mode: 'Markdown' });
 }
 
+export async function handleUndo(context: CommandHandlerContext): Promise<void> {
+  const { chatId, user, project, environment } = context;
+
+  if (project == null) {
+    await sendMessage(
+      chatId,
+      '📁 No project selected.\n\nCreate one with /new or join with /join',
+      environment.TELEGRAM_BOT_TOKEN
+    );
+    return;
+  }
+
+  // Find the user's last confirmed/personal transaction in this project
+  const lastTransaction = await environment.DB.prepare(`
+    SELECT * FROM transactions
+    WHERE project_id = ? AND user_id = ? AND status IN (?, ?)
+    ORDER BY confirmed_at DESC, created_at DESC
+    LIMIT 1
+  `).bind(project.id, user.id, TransactionStatus.CONFIRMED, TransactionStatus.PERSONAL).first();
+
+  if (lastTransaction == null) {
+    await sendMessage(
+      chatId,
+      '⏪ No transactions to undo.',
+      environment.TELEGRAM_BOT_TOKEN
+    );
+    return;
+  }
+
+  const transactionId = lastTransaction.id as string;
+  const merchant = lastTransaction.merchant as string;
+  const amount = lastTransaction.amount as number;
+  const previousStatus = lastTransaction.status as string;
+
+  // Revert to pending
+  await environment.DB.prepare(`
+    UPDATE transactions SET status = ?, confirmed_at = NULL WHERE id = ?
+  `).bind(TransactionStatus.PENDING, transactionId).run();
+
+  const statusText = previousStatus === TransactionStatus.PERSONAL ? 'personal' : 'confirmed';
+
+  await sendMessage(
+    chatId,
+    [
+      `⏪ *Undo: ${merchant}* ($${amount.toFixed(2)})`,
+      '',
+      `Reverted from ${statusText} to pending.`,
+      '',
+      '_What would you like to do?_',
+    ].join('\n'),
+    environment.TELEGRAM_BOT_TOKEN,
+    {
+      parse_mode: 'Markdown',
+      reply_markup: {
+        inline_keyboard: [
+          [
+            { text: '✅ Confirm', callback_data: `confirm_${transactionId}` },
+            { text: '👤 Personal', callback_data: `personal_${transactionId}` },
+          ],
+          [
+            { text: '✏️ Edit', callback_data: `edit_${transactionId}` },
+            { text: '❌ Delete', callback_data: `delete_${transactionId}` },
+          ],
+        ],
+      },
+    }
+  );
+}
+
 function groupTransactionsByCurrency(
   transactions: readonly Transaction[]
 ): Readonly<Record<string, readonly Transaction[]>> {
