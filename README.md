@@ -3,8 +3,6 @@
 > Proactive expense tracking powered by AI.
 > Don't log expenses — let AI detect and confirm them for you.
 
-![Demo](demo/demo.gif)
-
 ## The Problem
 
 Traditional expense tracking apps require manual entry:
@@ -25,21 +23,57 @@ Bank sends email → AI parses it → You tap to confirm (1 second)
 
 For travel with friends:
 ```
-You: "dinner 50 USD, Alice didn't join"
-AI: "Got it. $50 split between you, Partner, Bob. Alice excluded. ✓ Confirm?"
+You: "dinner 50 USD in Tokyo, Alice didn't join"
+AI: "Got it. $50 split between you and Bob. Alice excluded. ✓ Confirm?"
 ```
 
 ## Features
 
-| Feature | Description |
-|---------|-------------|
-| **Proactive Detection** | Monitors bank email notifications automatically |
-| **AI Parsing** | Extracts merchant, amount, category via GPT-4o-mini |
-| **Card Strategy Audit** | Alerts when you miss credit card rewards |
-| **Multi-currency** | Auto-converts based on real-time rates |
-| **Smart Splitting** | Natural language AA for group trips |
-| **One-tap Confirm** | Telegram inline keyboards, not forms |
-| **Debt Simplification** | Minimizes end-of-trip transactions |
+| Feature | Status | Description |
+|---------|--------|-------------|
+| **AI Parsing** | ✅ | Natural language → structured transaction via GPT-4o-mini |
+| **Multi-Project** | ✅ | Separate expenses by trip/event with invite codes |
+| **Smart Splitting** | ✅ | "dinner 50, exclude Alice" → auto-split |
+| **Multi-Currency** | ✅ | Per-project currency, grouped balance/settle |
+| **Location Tracking** | ✅ | AI extracts location or uses project default |
+| **Card Strategy** | ✅ | Alerts when you miss credit card rewards |
+| **One-Tap Confirm** | ✅ | Telegram inline keyboards, not forms |
+| **Transaction Edit** | ✅ | Edit amount, merchant, category, split inline |
+| **Debt Simplification** | ✅ | Minimizes end-of-trip transactions |
+| **Gmail Integration** | 🚧 | Auto-parse bank email notifications |
+
+## Quick Start
+
+```bash
+# Clone and install
+git clone https://github.com/anthropics/fintrack-ai.git
+cd fintrack-ai && pnpm install
+
+# Deploy to Cloudflare
+cd packages/telegram-bot
+npx wrangler secret put OPENAI_API_KEY
+npx wrangler secret put TELEGRAM_BOT_TOKEN
+npx wrangler deploy
+
+# Set webhook
+curl https://your-worker.workers.dev/setup-webhook
+```
+
+## Bot Commands
+
+| Command | Alias | Description |
+|---------|-------|-------------|
+| `/menu` | `/m` | Main menu |
+| `/balance` | `/b` | Show who owes whom |
+| `/settle` | `/s` | Settlement instructions |
+| `/history` | `/hi` | Recent transactions |
+| `/projects` | `/p` | List my projects |
+| `/new <name>` | | Create project |
+| `/join <code>` | | Join via invite code |
+| `/invite` | | Generate invite code (7-day expiry) |
+| `/switch` | | Switch project |
+| `/setlocation` | | Set project default location |
+| `/setcurrency` | | Set project default currency |
 
 ## Architecture
 
@@ -66,196 +100,51 @@ AI: "Got it. $50 split between you, Partner, Bob. Alice excluded. ✓ Confirm?"
                           │
                           ▼
 ┌─────────────────────────────────────────────────────────────┐
-│                    Interface Layer                          │
-│  ┌──────────────────────────────────────────────────┐      │
-│  │           Telegram Bot (Inline Keyboards)         │      │
-│  │     [✓ Confirm] [👤 Personal] [✏️ Edit] [❌ Del]   │      │
-│  └──────────────────────────────────────────────────┘      │
-└─────────────────────────┬───────────────────────────────────┘
-                          │
-                          ▼
-┌─────────────────────────────────────────────────────────────┐
 │                    Storage Layer                            │
-│  ┌──────────────┐  ┌──────────────┐                        │
-│  │ Cloudflare   │  │    Google    │                        │
-│  │  D1 (SQLite) │  │   Sheets     │                        │
-│  └──────────────┘  └──────────────┘                        │
+│  ┌──────────────────────────────────────────────────┐      │
+│  │              Cloudflare D1 (SQLite)               │      │
+│  │  users | projects | project_members | transactions│      │
+│  └──────────────────────────────────────────────────┘      │
 └─────────────────────────────────────────────────────────────┘
 ```
 
 ## Tech Stack
 
-| Layer | Technology | Why |
-|-------|------------|-----|
-| Runtime | Cloudflare Workers | Edge deployment, <50ms latency, generous free tier |
-| Language | TypeScript | Type safety, better DX |
-| AI | OpenAI GPT-4o-mini | Fast, cheap ($0.15/1M tokens), accurate |
-| Interface | Telegram Bot API | Cross-platform, no app install, inline keyboards |
-| Storage | Cloudflare D1 | SQLite at edge, zero cold start |
-| Monorepo | pnpm workspaces | Clean package separation |
-
-## Quick Start
-
-### Prerequisites
-
-- Node.js 18+
-- pnpm
-- Cloudflare account (free tier)
-- Telegram Bot Token (via @BotFather)
-- OpenAI API Key
-
-### Installation
-
-```bash
-# Clone the repo
-git clone https://github.com/yourusername/fintrack-ai.git
-cd fintrack-ai
-
-# Install dependencies
-pnpm install
-
-# Set up environment variables
-cp .env.example .env
-# Edit .env with your API keys
-
-# Run locally
-pnpm dev
-```
-
-### Deploy to Cloudflare
-
-```bash
-# Login to Cloudflare
-npx wrangler login
-
-# Deploy
-pnpm deploy
-```
-
-## Configuration
-
-### Environment Variables
-
-```env
-OPENAI_API_KEY=sk-...
-TELEGRAM_BOT_TOKEN=123456789:ABC...
-TELEGRAM_CHAT_ID=your_chat_id
-
-# Optional: Google Sheets integration
-GOOGLE_SHEETS_ID=your_sheet_id
-GOOGLE_SERVICE_ACCOUNT_KEY={"type":"service_account",...}
-```
-
-### Credit Card Strategy
-
-Edit `packages/core/src/strategy.ts` to customize for your cards:
-
-```typescript
-export const CARD_STRATEGIES: CardStrategy[] = [
-  {
-    cardName: 'Amex Cobalt',
-    lastFourDigits: '1234',
-    bestFor: ['dining', 'grocery', 'streaming'],
-    multiplier: '5x MR points',
-    notes: '2.5% FX fee on foreign transactions'
-  },
-  {
-    cardName: 'Rogers World Elite MC',
-    lastFourDigits: '5678',
-    bestFor: ['costco', 'foreign', 'usd'],
-    multiplier: '1.5% cashback (foreign), 1% (domestic)',
-    notes: 'No FX fee, Costco exclusive'
-  }
-];
-```
-
-## Splitting Algorithm
-
-The debt simplification algorithm minimizes the number of transactions needed to settle:
-
-**Before simplification:**
-```
-Alice → Bob: $30
-Bob → Carol: $30
-Carol → Alice: $10
-```
-
-**After simplification:**
-```
-Alice → Bob: $10
-Alice → Carol: $10
-```
-
-See [docs/architecture.md](docs/architecture.md) for the algorithm explanation.
+| Layer | Technology |
+|-------|------------|
+| Runtime | Cloudflare Workers |
+| Database | Cloudflare D1 (SQLite) |
+| AI | OpenAI GPT-4o-mini |
+| Interface | Telegram Bot API |
+| Language | TypeScript |
+| Monorepo | pnpm workspaces |
 
 ## Project Structure
 
 ```
-fintrack-ai/
-├── packages/
-│   ├── core/              # Shared business logic
-│   │   ├── src/
-│   │   │   ├── parser.ts      # AI transaction parsing
-│   │   │   ├── splitter.ts    # Expense splitting logic
-│   │   │   ├── strategy.ts    # Credit card optimization
-│   │   │   └── types.ts       # TypeScript types
-│   │   └── tests/
-│   ├── telegram-bot/      # Telegram bot worker
-│   └── gmail-worker/      # Gmail webhook processor
-├── docs/
-│   ├── architecture.md
-│   └── card-strategies.md
-└── demo/
-    └── screenshots/
+packages/
+├── core/              # Shared business logic
+│   ├── parser.ts      # AI transaction parsing
+│   ├── splitter.ts    # Expense splitting & debt simplification
+│   ├── strategy.ts    # Credit card optimization
+│   └── types.ts       # TypeScript types
+├── telegram-bot/      # Telegram bot worker
+│   ├── src/index.ts   # Main handler
+│   ├── schema.sql     # D1 schema
+│   └── migrations/    # Database migrations
+└── gmail-worker/      # Gmail webhook processor (WIP)
 ```
 
 ## Status
 
-✅ **MVP Deployed** — Telegram bot live and parsing expenses!
+**MVP Complete** — Multi-project expense tracking with AI parsing
 
-| Component | Code | Unit Tests | Deployed | E2E Verified |
-|-----------|------|------------|----------|--------------|
-| core/parser | ✅ | ✅ | - | ✅ |
-| core/strategy | ✅ | ✅ | - | ✅ |
-| core/splitter | ✅ | ✅ | - | - |
-| telegram-bot | ✅ | - | ✅ | ✅ |
-| gmail-worker | ✅ | - | ❌ | ❌ |
-
-**Try it:** [@AIFinTrack_Bot](https://t.me/AIFinTrack_Bot)
-
-## Roadmap
-
-**Phase 1: Foundation** ✅
-- [x] TypeScript monorepo setup (pnpm workspace)
-- [x] Core business logic implementation
-- [x] Unit tests for splitter & strategy
-
-**Phase 2: Deployment** ✅
-- [x] Deploy Telegram bot to Cloudflare Workers
-- [x] Create Telegram Bot via BotFather
-- [ ] Deploy Gmail worker to Cloudflare Workers
-- [ ] Configure bank email forwarding
-
-**Phase 3: Validation** 🚧
-- [x] End-to-end transaction parsing
-- [ ] Test with real bank emails (Amex, TD, RBC)
-- [ ] Partner onboarding
-
-**Phase 4: Enhancements**
-- [ ] Multi-currency with live rates
-- [ ] Apple Shortcuts integration
-- [ ] Receipt OCR (photo → transaction)
-- [ ] Location-based merchant detection
-- [ ] Monthly spending reports via AI
-
-## Contributing
-
-Contributions are welcome! Please read [CONTRIBUTING.md](CONTRIBUTING.md) first.
+| Component | Status |
+|-----------|--------|
+| core (parser, splitter, strategy) | ✅ Deployed |
+| telegram-bot | ✅ Deployed |
+| gmail-worker | 🚧 WIP |
 
 ## License
 
-MIT - see [LICENSE](LICENSE)
-
----
-
-Built with TypeScript, Cloudflare Workers, and GPT-4o-mini.
+MIT

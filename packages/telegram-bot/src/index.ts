@@ -1076,6 +1076,14 @@ async function handleCommand(
         await sendMessage(chatId, '❌ Usage: /editamount <txId> <amount>', env.TELEGRAM_BOT_TOKEN);
         break;
       }
+      // Permission check: verify transaction belongs to user's project
+      const tx = await env.DB.prepare(
+        'SELECT id FROM transactions WHERE id = ? AND project_id = ?'
+      ).bind(txId, project?.id ?? 'default').first();
+      if (!tx) {
+        await sendMessage(chatId, '❌ Transaction not found or no permission.', env.TELEGRAM_BOT_TOKEN);
+        break;
+      }
       await env.DB.prepare('UPDATE transactions SET amount = ? WHERE id = ?').bind(newAmount, txId).run();
       await sendMessage(chatId, `✅ Amount updated to $${newAmount.toFixed(2)}`, env.TELEGRAM_BOT_TOKEN);
       break;
@@ -1086,6 +1094,14 @@ async function handleCommand(
       const newMerchant = merchantParts.join(' ').replace(/"/g, '').trim();
       if (!txId || !newMerchant) {
         await sendMessage(chatId, '❌ Usage: /editmerchant <txId> <name>', env.TELEGRAM_BOT_TOKEN);
+        break;
+      }
+      // Permission check
+      const tx = await env.DB.prepare(
+        'SELECT id FROM transactions WHERE id = ? AND project_id = ?'
+      ).bind(txId, project?.id ?? 'default').first();
+      if (!tx) {
+        await sendMessage(chatId, '❌ Transaction not found or no permission.', env.TELEGRAM_BOT_TOKEN);
         break;
       }
       await env.DB.prepare('UPDATE transactions SET merchant = ? WHERE id = ?').bind(newMerchant, txId).run();
@@ -1102,7 +1118,10 @@ async function handleCommand(
       }
 
       // Parse split text: "Bodhi 30, Sherry 20" or "equal"
-      const tx = await env.DB.prepare('SELECT * FROM transactions WHERE id = ?').bind(txId).first();
+      // Permission check
+      const tx = await env.DB.prepare(
+        'SELECT * FROM transactions WHERE id = ? AND project_id = ?'
+      ).bind(txId, project?.id ?? 'default').first();
       if (!tx) {
         await sendMessage(chatId, '❌ Transaction not found.', env.TELEGRAM_BOT_TOKEN);
         break;
@@ -1204,6 +1223,7 @@ async function handleCallbackQuery(
 
     case 'edit': {
       // Show edit options for transaction
+      // Use short prefixes: txe_ (edit menu), txc_ (category set)
       const txId = id;
       await sendMessage(
         query.message?.chat.id ?? 0,
@@ -1214,14 +1234,14 @@ async function handleCallbackQuery(
           reply_markup: {
             inline_keyboard: [
               [
-                { text: '💰 Amount', callback_data: `txedit_amount_${txId}` },
-                { text: '📍 Merchant', callback_data: `txedit_merchant_${txId}` },
+                { text: '💰 Amount', callback_data: `txe_amt_${txId}` },
+                { text: '📍 Merchant', callback_data: `txe_mrc_${txId}` },
               ],
               [
-                { text: '🏷️ Category', callback_data: `txedit_category_${txId}` },
-                { text: '👥 Split', callback_data: `txedit_split_${txId}` },
+                { text: '🏷️ Category', callback_data: `txe_cat_${txId}` },
+                { text: '👥 Split', callback_data: `txe_spl_${txId}` },
               ],
-              [{ text: '❌ Cancel', callback_data: `txedit_cancel_${txId}` }],
+              [{ text: '❌ Cancel', callback_data: `txe_x_${txId}` }],
             ],
           },
         }
@@ -1361,24 +1381,38 @@ async function handleCallbackQuery(
       break;
     }
 
-    case 'txedit': {
-      // Transaction edit - id format: field_txId
+    case 'txe': {
+      // Transaction edit menu - id format: field_txId (e.g., amt_uuid, cat_uuid)
       const chatId = query.message?.chat.id ?? 0;
-      const [field, txId] = id.split('_');
+      const underscoreIdx = id.indexOf('_');
+      const field = id.substring(0, underscoreIdx);
+      const txId = id.substring(underscoreIdx + 1);
 
-      if (field === 'cancel') {
+      // Permission check
+      const user = await getOrCreateUser(env, query.from);
+      const project = await getCurrentProject(env, user.id);
+      const tx = await env.DB.prepare(
+        'SELECT id FROM transactions WHERE id = ? AND project_id = ?'
+      ).bind(txId, project?.id ?? 'default').first();
+      if (!tx) {
+        await sendMessage(chatId, '❌ Transaction not found or no permission.', env.TELEGRAM_BOT_TOKEN);
+        break;
+      }
+
+      if (field === 'x') {
         await deleteMessage(chatId, query.message?.message_id ?? 0, env.TELEGRAM_BOT_TOKEN);
         break;
       }
 
-      if (field === 'category') {
-        // Show category picker
+      if (field === 'cat') {
+        // Show category picker - use short callback: txc_<cat>_<txId>
+        // Max: txc_entertainment_<36-char-uuid> = 4 + 13 + 1 + 36 = 54 bytes (safe)
         const categories = ['dining', 'grocery', 'gas', 'shopping', 'travel', 'transport', 'entertainment', 'health', 'utilities', 'other'];
         const keyboard = [];
         for (let i = 0; i < categories.length; i += 3) {
           keyboard.push(categories.slice(i, i + 3).map(c => ({
             text: c,
-            callback_data: `txset_category_${c}_${txId}`,
+            callback_data: `txc_${c}_${txId}`,
           })));
         }
         await sendMessage(chatId, '🏷️ Select category:', env.TELEGRAM_BOT_TOKEN, {
@@ -1387,36 +1421,44 @@ async function handleCallbackQuery(
       } else {
         // For amount, merchant, split - ask for text input
         const prompts: Record<string, string> = {
-          amount: '💰 Reply with the new amount (e.g., 50.00):',
-          merchant: '📍 Reply with the new merchant name:',
-          split: '👥 Reply with split (e.g., "Bodhi 30, Sherry 20" or "equal"):',
+          amt: '💰 Reply with the new amount (e.g., 50.00):',
+          mrc: '📍 Reply with the new merchant name:',
+          spl: '👥 Reply with split (e.g., "Bodhi 30, Sherry 20" or "equal"):',
         };
         await sendMessage(chatId, `${prompts[field]}\n\n_Transaction ID: ${txId}_`, env.TELEGRAM_BOT_TOKEN, { parse_mode: 'Markdown' });
       }
       break;
     }
 
-    case 'txset': {
-      // Transaction set value - id format: field_value_txId
+    case 'txc': {
+      // Transaction category set - id format: category_txId (e.g., dining_uuid)
       const chatId = query.message?.chat.id ?? 0;
-      const parts = id.split('_');
-      const field = parts[0];
-      const txId = parts[parts.length - 1];
-      const value = parts.slice(1, -1).join('_');
+      const underscoreIdx = id.indexOf('_');
+      const category = id.substring(0, underscoreIdx);
+      const txId = id.substring(underscoreIdx + 1);
 
-      if (field === 'category') {
-        await env.DB.prepare(
-          'UPDATE transactions SET category = ? WHERE id = ?'
-        ).bind(value, txId).run();
-
-        await editMessageText(
-          chatId,
-          query.message?.message_id ?? 0,
-          `✅ Category updated to *${value}*`,
-          env.TELEGRAM_BOT_TOKEN,
-          { parse_mode: 'Markdown' }
-        );
+      // Permission check
+      const user = await getOrCreateUser(env, query.from);
+      const project = await getCurrentProject(env, user.id);
+      const tx = await env.DB.prepare(
+        'SELECT id FROM transactions WHERE id = ? AND project_id = ?'
+      ).bind(txId, project?.id ?? 'default').first();
+      if (!tx) {
+        await sendMessage(chatId, '❌ Transaction not found or no permission.', env.TELEGRAM_BOT_TOKEN);
+        break;
       }
+
+      await env.DB.prepare(
+        'UPDATE transactions SET category = ? WHERE id = ?'
+      ).bind(category, txId).run();
+
+      await editMessageText(
+        chatId,
+        query.message?.message_id ?? 0,
+        `✅ Category updated to *${category}*`,
+        env.TELEGRAM_BOT_TOKEN,
+        { parse_mode: 'Markdown' }
+      );
       break;
     }
 
