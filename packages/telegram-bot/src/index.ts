@@ -55,6 +55,7 @@ interface TelegramMessage {
   text?: string;
   voice?: { file_id: string };
   photo?: Array<{ file_id: string }>;
+  location?: { latitude: number; longitude: number };
 }
 
 interface TelegramUser {
@@ -314,8 +315,113 @@ async function handleUpdate(update: TelegramUpdate, env: Env): Promise<void> {
     return;
   }
 
+  // Handle location sharing
+  if (update.message?.location) {
+    await handleLocationMessage(update.message, env);
+    return;
+  }
+
   // TODO: Handle voice messages (Whisper API)
   // TODO: Handle photo messages (receipt OCR)
+}
+
+// ============================================
+// Location Message Handler
+// ============================================
+
+async function handleLocationMessage(
+  message: TelegramMessage,
+  env: Env
+): Promise<void> {
+  const chatId = message.chat.id;
+  const telegramUser = message.from;
+  if (!telegramUser || !message.location) return;
+
+  const { latitude, longitude } = message.location;
+  const user = await getOrCreateUser(env, telegramUser);
+  const project = await getCurrentProject(env, user.id);
+
+  if (!project) {
+    await sendMessage(
+      chatId,
+      `📍 Location received, but no project selected.\n\nCreate a project first with /new`,
+      env.TELEGRAM_BOT_TOKEN
+    );
+    return;
+  }
+
+  // Simple city detection based on coordinates
+  const city = detectCityFromCoords(latitude, longitude);
+
+  if (city) {
+    // Auto-set the location
+    await env.DB.prepare(
+      'UPDATE projects SET default_location = ? WHERE id = ?'
+    ).bind(city, project.id).run();
+
+    await sendMessage(
+      chatId,
+      `📍 Location set to *${city}* for ${project.name}`,
+      env.TELEGRAM_BOT_TOKEN,
+      { parse_mode: 'Markdown' }
+    );
+  } else {
+    await sendMessage(
+      chatId,
+      `📍 Got your location (${latitude.toFixed(2)}, ${longitude.toFixed(2)})\n\nUse \`/setlocation "City Name"\` to set it manually.`,
+      env.TELEGRAM_BOT_TOKEN,
+      { parse_mode: 'Markdown' }
+    );
+  }
+}
+
+// Simple coordinate-to-city mapping for common destinations
+function detectCityFromCoords(lat: number, lon: number): string | null {
+  const cities: Array<{ name: string; lat: number; lon: number; radius: number }> = [
+    // Canada
+    { name: 'Toronto', lat: 43.65, lon: -79.38, radius: 0.5 },
+    { name: 'Vancouver', lat: 49.28, lon: -123.12, radius: 0.5 },
+    { name: 'Montreal', lat: 45.50, lon: -73.57, radius: 0.5 },
+    { name: 'Calgary', lat: 51.05, lon: -114.07, radius: 0.5 },
+    // USA
+    { name: 'New York', lat: 40.71, lon: -74.01, radius: 0.5 },
+    { name: 'Los Angeles', lat: 34.05, lon: -118.24, radius: 0.5 },
+    { name: 'San Francisco', lat: 37.77, lon: -122.42, radius: 0.3 },
+    { name: 'Seattle', lat: 47.61, lon: -122.33, radius: 0.3 },
+    { name: 'Las Vegas', lat: 36.17, lon: -115.14, radius: 0.3 },
+    { name: 'Hawaii', lat: 21.31, lon: -157.86, radius: 1.0 },
+    // Mexico
+    { name: 'Mexico City', lat: 19.43, lon: -99.13, radius: 0.5 },
+    { name: 'Cancun', lat: 21.16, lon: -86.85, radius: 0.3 },
+    // Central America
+    { name: 'Costa Rica', lat: 9.93, lon: -84.08, radius: 1.0 },
+    // Japan
+    { name: 'Tokyo', lat: 35.68, lon: 139.69, radius: 0.5 },
+    { name: 'Osaka', lat: 34.69, lon: 135.50, radius: 0.3 },
+    { name: 'Kyoto', lat: 35.01, lon: 135.77, radius: 0.2 },
+    // Europe
+    { name: 'London', lat: 51.51, lon: -0.13, radius: 0.3 },
+    { name: 'Paris', lat: 48.86, lon: 2.35, radius: 0.3 },
+    { name: 'Rome', lat: 41.90, lon: 12.50, radius: 0.3 },
+    { name: 'Barcelona', lat: 41.39, lon: 2.17, radius: 0.3 },
+    { name: 'Amsterdam', lat: 52.37, lon: 4.90, radius: 0.2 },
+    // Asia
+    { name: 'Hong Kong', lat: 22.32, lon: 114.17, radius: 0.3 },
+    { name: 'Singapore', lat: 1.35, lon: 103.82, radius: 0.3 },
+    { name: 'Seoul', lat: 37.57, lon: 126.98, radius: 0.3 },
+    { name: 'Bangkok', lat: 13.76, lon: 100.50, radius: 0.3 },
+  ];
+
+  for (const city of cities) {
+    const distance = Math.sqrt(
+      Math.pow(lat - city.lat, 2) + Math.pow(lon - city.lon, 2)
+    );
+    if (distance <= city.radius) {
+      return city.name;
+    }
+  }
+
+  return null;
 }
 
 // ============================================

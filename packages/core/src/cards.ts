@@ -4,8 +4,8 @@
  */
 
 // Data freshness tracking
-export const CARD_DATA_VERSION = '2025-01';
-export const CARD_DATA_LAST_UPDATED = '2025-01-23';
+export const CARD_DATA_VERSION = '2026-01';
+export const CARD_DATA_LAST_UPDATED = '2026-01-23';
 
 import type { Category } from './types';
 
