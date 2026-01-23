@@ -211,15 +211,17 @@ fintrack-ai/
 
 ## Status
 
-🚧 **Work in Progress** — Core architecture complete, pending deployment and real-world testing.
+✅ **MVP Deployed** — Telegram bot live and parsing expenses!
 
 | Component | Code | Unit Tests | Deployed | E2E Verified |
 |-----------|------|------------|----------|--------------|
-| core/parser | ✅ | ⏳ | - | ❌ |
-| core/strategy | ✅ | ✅ | - | - |
+| core/parser | ✅ | ✅ | - | ✅ |
+| core/strategy | ✅ | ✅ | - | ✅ |
 | core/splitter | ✅ | ✅ | - | - |
-| telegram-bot | ✅ | ❌ | ❌ | ❌ |
-| gmail-worker | ✅ | ❌ | ❌ | ❌ |
+| telegram-bot | ✅ | - | ✅ | ✅ |
+| gmail-worker | ✅ | - | ❌ | ❌ |
+
+**Try it:** [@AIFinTrack_Bot](https://t.me/AIFinTrack_Bot)
 
 ## Roadmap
 
@@ -228,15 +230,15 @@ fintrack-ai/
 - [x] Core business logic implementation
 - [x] Unit tests for splitter & strategy
 
-**Phase 2: Deployment** 🚧
-- [ ] Deploy Telegram bot to Cloudflare Workers
+**Phase 2: Deployment** ✅
+- [x] Deploy Telegram bot to Cloudflare Workers
+- [x] Create Telegram Bot via BotFather
 - [ ] Deploy Gmail worker to Cloudflare Workers
-- [ ] Create Telegram Bot via BotFather
 - [ ] Configure bank email forwarding
 
-**Phase 3: Validation**
+**Phase 3: Validation** 🚧
+- [x] End-to-end transaction parsing
 - [ ] Test with real bank emails (Amex, TD, RBC)
-- [ ] End-to-end transaction flow
 - [ ] Partner onboarding
 
 **Phase 4: Enhancements**
