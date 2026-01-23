@@ -5,7 +5,6 @@
 import type { CallbackQuery, Environment } from '../../types.js';
 import { sendMessage, editMessageText, deleteMessage } from '../../telegram/api.js';
 import { getOrCreateUser, getCurrentProject } from '../../db/index.js';
-import { DEFAULT_PROJECT_ID } from '../../constants.js';
 
 const CATEGORIES = [
   'dining', 'grocery', 'gas', 'shopping', 'subscription',
@@ -32,9 +31,14 @@ export async function handleEditCallbacks(
   const user = await getOrCreateUser(environment, query.from);
   const project = await getCurrentProject(environment, user.id);
 
+  if (project == null) {
+    await sendMessage(chatId, '📁 No project selected.', environment.TELEGRAM_BOT_TOKEN);
+    return;
+  }
+
   const transaction = await environment.DB.prepare(
     'SELECT id FROM transactions WHERE id = ? AND project_id = ?'
-  ).bind(transactionId, project?.id ?? DEFAULT_PROJECT_ID).first();
+  ).bind(transactionId, project.id).first();
 
   if (transaction == null) {
     await sendMessage(chatId, '❌ Transaction not found or no permission.', environment.TELEGRAM_BOT_TOKEN);
@@ -85,9 +89,14 @@ export async function handleCategoryCallback(
   const user = await getOrCreateUser(environment, query.from);
   const project = await getCurrentProject(environment, user.id);
 
+  if (project == null) {
+    await sendMessage(chatId, '📁 No project selected.', environment.TELEGRAM_BOT_TOKEN);
+    return;
+  }
+
   const transaction = await environment.DB.prepare(
     'SELECT id FROM transactions WHERE id = ? AND project_id = ?'
-  ).bind(transactionId, project?.id ?? DEFAULT_PROJECT_ID).first();
+  ).bind(transactionId, project.id).first();
 
   if (transaction == null) {
     await sendMessage(chatId, '❌ Transaction not found or no permission.', environment.TELEGRAM_BOT_TOKEN);

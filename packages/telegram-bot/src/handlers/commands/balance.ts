@@ -6,12 +6,21 @@ import { calculateBalances, simplifyDebts, formatSettlements, type Transaction }
 import type { CommandHandlerContext } from './index.js';
 import { sendMessage } from '../../telegram/api.js';
 import { rowToTransaction } from '../../db/index.js';
-import { TransactionStatus, DEFAULT_PROJECT_ID } from '../../constants.js';
+import { TransactionStatus } from '../../constants.js';
 
 export async function handleBalance(context: CommandHandlerContext): Promise<void> {
   const { chatId, project, environment } = context;
 
-  const projectId = project?.id ?? DEFAULT_PROJECT_ID;
+  if (project == null) {
+    await sendMessage(
+      chatId,
+      '📁 No project selected.\n\nCreate one with /new or join with /join',
+      environment.TELEGRAM_BOT_TOKEN
+    );
+    return;
+  }
+
+  const projectId = project.id;
   const balanceRows = await environment.DB.prepare(`
     SELECT * FROM transactions
     WHERE project_id = ? AND status = ? AND is_shared = 1
@@ -23,7 +32,7 @@ export async function handleBalance(context: CommandHandlerContext): Promise<voi
   if (balanceRows.results == null || balanceRows.results.length === 0) {
     await sendMessage(
       chatId,
-      `📊 No confirmed expenses in *${project?.name ?? 'Daily'}*`,
+      `📊 No confirmed expenses in *${project.name}*`,
       environment.TELEGRAM_BOT_TOKEN,
       { parse_mode: 'Markdown' }
     );
@@ -55,7 +64,7 @@ export async function handleBalance(context: CommandHandlerContext): Promise<voi
   }
 
   const message = [
-    `📊 *${project?.name ?? 'Daily'} Balances*`,
+    `📊 *${project.name} Balances*`,
     ...currencyBalanceLines,
   ].join('\n');
 
@@ -65,19 +74,27 @@ export async function handleBalance(context: CommandHandlerContext): Promise<voi
 export async function handleSettle(context: CommandHandlerContext): Promise<void> {
   const { chatId, project, environment } = context;
 
-  const projectId = project?.id ?? DEFAULT_PROJECT_ID;
+  if (project == null) {
+    await sendMessage(
+      chatId,
+      '📁 No project selected.\n\nCreate one with /new or join with /join',
+      environment.TELEGRAM_BOT_TOKEN
+    );
+    return;
+  }
+
   const settleRows = await environment.DB.prepare(`
     SELECT * FROM transactions
     WHERE project_id = ? AND status = ? AND is_shared = 1
       AND created_at > datetime('now', '-30 days')
     ORDER BY created_at DESC
     LIMIT 200
-  `).bind(projectId, TransactionStatus.CONFIRMED).all();
+  `).bind(project.id, TransactionStatus.CONFIRMED).all();
 
   if (settleRows.results == null || settleRows.results.length === 0) {
     await sendMessage(
       chatId,
-      `💸 No expenses to settle in *${project?.name ?? 'Daily'}*`,
+      `💸 No expenses to settle in *${project.name}*`,
       environment.TELEGRAM_BOT_TOKEN,
       { parse_mode: 'Markdown' }
     );
@@ -102,7 +119,7 @@ export async function handleSettle(context: CommandHandlerContext): Promise<void
   }
 
   const message = [
-    `💸 *${project?.name ?? 'Daily'} Settlement*`,
+    `💸 *${project.name} Settlement*`,
     ...settlementLines,
   ].join('\n');
 
@@ -112,18 +129,26 @@ export async function handleSettle(context: CommandHandlerContext): Promise<void
 export async function handleHistory(context: CommandHandlerContext): Promise<void> {
   const { chatId, project, environment } = context;
 
-  const projectId = project?.id ?? DEFAULT_PROJECT_ID;
+  if (project == null) {
+    await sendMessage(
+      chatId,
+      '📁 No project selected.\n\nCreate one with /new or join with /join',
+      environment.TELEGRAM_BOT_TOKEN
+    );
+    return;
+  }
+
   const historyRows = await environment.DB.prepare(`
     SELECT * FROM transactions
     WHERE project_id = ? AND status IN (?, ?)
     ORDER BY created_at DESC
     LIMIT 10
-  `).bind(projectId, TransactionStatus.CONFIRMED, TransactionStatus.PERSONAL).all();
+  `).bind(project.id, TransactionStatus.CONFIRMED, TransactionStatus.PERSONAL).all();
 
   if (historyRows.results == null || historyRows.results.length === 0) {
     await sendMessage(
       chatId,
-      `📜 No history in *${project?.name ?? 'Daily'}*`,
+      `📜 No history in *${project.name}*`,
       environment.TELEGRAM_BOT_TOKEN,
       { parse_mode: 'Markdown' }
     );
@@ -137,7 +162,7 @@ export async function handleHistory(context: CommandHandlerContext): Promise<voi
   });
 
   const message = [
-    `📜 *${project?.name ?? 'Daily'} History*`,
+    `📜 *${project.name} History*`,
     '',
     ...historyLines,
   ].join('\n');

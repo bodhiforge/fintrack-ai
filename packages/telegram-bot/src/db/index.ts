@@ -3,6 +3,6 @@
  */
 
 export { rowToTransaction } from './transactions.js';
-export { rowToUser, getOrCreateUser } from './users.js';
+export { rowToUser, getOrCreateUser, type UserWithIsNew } from './users.js';
 export { rowToProject, getCurrentProject, getProjectMembers } from './projects.js';
 export { getUserCards } from './cards.js';
