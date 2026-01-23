@@ -24,10 +24,23 @@ export {
   DEFAULT_RATES,
 } from './splitter.js';
 
-// Strategy
+// Strategy (legacy - use cards.ts for new implementations)
 export {
   CardStrategyEngine,
   DEFAULT_CARD_STRATEGIES,
   checkCardStrategy,
   formatStrategyResult,
 } from './strategy.js';
+
+// Cards & Recommendation
+export * from './cards.js';
+export {
+  recommendCard,
+  detectForeignByLocation,
+  formatRecommendation,
+  formatBenefits,
+  formatCardSuggestion,
+  type UserCardWithDetails,
+  type RecommendationResult,
+  type CardSuggestion,
+} from './cardRecommender.js';

@@ -6,17 +6,26 @@
 import {
   TransactionParser,
   splitExpense,
-  checkCardStrategy,
-  formatStrategyResult,
   parseNaturalLanguageSplit,
   calculateBalances,
   simplifyDebts,
   formatSettlements,
+  // Card recommendation
+  PRESET_CARDS,
+  getCardById,
+  recommendCard,
+  detectForeignByLocation,
+  formatRecommendation,
+  formatBenefits,
+  formatCardSuggestion,
+  benefitEmoji,
   type Transaction,
   type Category,
   type Currency,
   type User,
   type Project,
+  type CreditCard,
+  type UserCardWithDetails,
 } from '@fintrack-ai/core';
 
 // ============================================
@@ -46,6 +55,7 @@ interface TelegramMessage {
   text?: string;
   voice?: { file_id: string };
   photo?: Array<{ file_id: string }>;
+  location?: { latitude: number; longitude: number };
 }
 
 interface TelegramUser {
@@ -257,6 +267,29 @@ async function getProjectMembers(env: Env, projectId: string): Promise<string[]>
   return rows.results?.map((r) => (r as Record<string, unknown>).display_name as string) ?? [];
 }
 
+async function getUserCards(env: Env, userId: number): Promise<UserCardWithDetails[]> {
+  const rows = await env.DB.prepare(
+    'SELECT * FROM user_cards WHERE user_id = ? AND is_active = 1'
+  ).bind(userId).all();
+
+  if (!rows.results) return [];
+
+  return rows.results.map(row => {
+    const r = row as Record<string, unknown>;
+    const card = getCardById(r.card_id as string);
+    return {
+      id: r.id as string,
+      odId: r.user_id as number,
+      cardId: r.card_id as string,
+      lastFour: r.last_four as string | undefined,
+      nickname: r.nickname as string | undefined,
+      isActive: r.is_active === 1,
+      addedAt: r.added_at as string,
+      card: card!,
+    };
+  }).filter(uc => uc.card); // Filter out any with invalid card_id
+}
+
 // ============================================
 // Update Handler
 // ============================================
@@ -282,8 +315,113 @@ async function handleUpdate(update: TelegramUpdate, env: Env): Promise<void> {
     return;
   }
 
+  // Handle location sharing
+  if (update.message?.location) {
+    await handleLocationMessage(update.message, env);
+    return;
+  }
+
   // TODO: Handle voice messages (Whisper API)
   // TODO: Handle photo messages (receipt OCR)
+}
+
+// ============================================
+// Location Message Handler
+// ============================================
+
+async function handleLocationMessage(
+  message: TelegramMessage,
+  env: Env
+): Promise<void> {
+  const chatId = message.chat.id;
+  const telegramUser = message.from;
+  if (!telegramUser || !message.location) return;
+
+  const { latitude, longitude } = message.location;
+  const user = await getOrCreateUser(env, telegramUser);
+  const project = await getCurrentProject(env, user.id);
+
+  if (!project) {
+    await sendMessage(
+      chatId,
+      `📍 Location received, but no project selected.\n\nCreate a project first with /new`,
+      env.TELEGRAM_BOT_TOKEN
+    );
+    return;
+  }
+
+  // Simple city detection based on coordinates
+  const city = detectCityFromCoords(latitude, longitude);
+
+  if (city) {
+    // Auto-set the location
+    await env.DB.prepare(
+      'UPDATE projects SET default_location = ? WHERE id = ?'
+    ).bind(city, project.id).run();
+
+    await sendMessage(
+      chatId,
+      `📍 Location set to *${city}* for ${project.name}`,
+      env.TELEGRAM_BOT_TOKEN,
+      { parse_mode: 'Markdown' }
+    );
+  } else {
+    await sendMessage(
+      chatId,
+      `📍 Got your location (${latitude.toFixed(2)}, ${longitude.toFixed(2)})\n\nUse \`/setlocation "City Name"\` to set it manually.`,
+      env.TELEGRAM_BOT_TOKEN,
+      { parse_mode: 'Markdown' }
+    );
+  }
+}
+
+// Simple coordinate-to-city mapping for common destinations
+function detectCityFromCoords(lat: number, lon: number): string | null {
+  const cities: Array<{ name: string; lat: number; lon: number; radius: number }> = [
+    // Canada
+    { name: 'Toronto', lat: 43.65, lon: -79.38, radius: 0.5 },
+    { name: 'Vancouver', lat: 49.28, lon: -123.12, radius: 0.5 },
+    { name: 'Montreal', lat: 45.50, lon: -73.57, radius: 0.5 },
+    { name: 'Calgary', lat: 51.05, lon: -114.07, radius: 0.5 },
+    // USA
+    { name: 'New York', lat: 40.71, lon: -74.01, radius: 0.5 },
+    { name: 'Los Angeles', lat: 34.05, lon: -118.24, radius: 0.5 },
+    { name: 'San Francisco', lat: 37.77, lon: -122.42, radius: 0.3 },
+    { name: 'Seattle', lat: 47.61, lon: -122.33, radius: 0.3 },
+    { name: 'Las Vegas', lat: 36.17, lon: -115.14, radius: 0.3 },
+    { name: 'Hawaii', lat: 21.31, lon: -157.86, radius: 1.0 },
+    // Mexico
+    { name: 'Mexico City', lat: 19.43, lon: -99.13, radius: 0.5 },
+    { name: 'Cancun', lat: 21.16, lon: -86.85, radius: 0.3 },
+    // Central America
+    { name: 'Costa Rica', lat: 9.93, lon: -84.08, radius: 1.0 },
+    // Japan
+    { name: 'Tokyo', lat: 35.68, lon: 139.69, radius: 0.5 },
+    { name: 'Osaka', lat: 34.69, lon: 135.50, radius: 0.3 },
+    { name: 'Kyoto', lat: 35.01, lon: 135.77, radius: 0.2 },
+    // Europe
+    { name: 'London', lat: 51.51, lon: -0.13, radius: 0.3 },
+    { name: 'Paris', lat: 48.86, lon: 2.35, radius: 0.3 },
+    { name: 'Rome', lat: 41.90, lon: 12.50, radius: 0.3 },
+    { name: 'Barcelona', lat: 41.39, lon: 2.17, radius: 0.3 },
+    { name: 'Amsterdam', lat: 52.37, lon: 4.90, radius: 0.2 },
+    // Asia
+    { name: 'Hong Kong', lat: 22.32, lon: 114.17, radius: 0.3 },
+    { name: 'Singapore', lat: 1.35, lon: 103.82, radius: 0.3 },
+    { name: 'Seoul', lat: 37.57, lon: 126.98, radius: 0.3 },
+    { name: 'Bangkok', lat: 13.76, lon: 100.50, radius: 0.3 },
+  ];
+
+  for (const city of cities) {
+    const distance = Math.sqrt(
+      Math.pow(lat - city.lat, 2) + Math.pow(lon - city.lon, 2)
+    );
+    if (distance <= city.radius) {
+      return city.name;
+    }
+  }
+
+  return null;
 }
 
 // ============================================
@@ -332,9 +470,6 @@ async function handleTextMessage(
     const parser = new TransactionParser(env.OPENAI_API_KEY);
     const { parsed, confidence, warnings } = await parser.parseNaturalLanguage(text);
 
-    // Check card strategy
-    const strategyResult = checkCardStrategy(parsed);
-
     // Get payer's display name from project membership
     const membership = await env.DB.prepare(
       'SELECT display_name FROM project_members WHERE project_id = ? AND user_id = ?'
@@ -380,6 +515,15 @@ async function handleTextMessage(
       new Date().toISOString()
     ).run();
 
+    // Get user's cards for recommendation
+    const userCards = await getUserCards(env, user.id);
+    const foreignCheck = detectForeignByLocation(location ?? undefined, parsed.currency);
+    const cardRec = recommendCard(parsed, userCards, foreignCheck.isForeign);
+    // Add location-based currency warning if detected
+    if (foreignCheck.warning && !cardRec.best.warning) {
+      cardRec.best.warning = foreignCheck.warning;
+    }
+
     // Build response message
     let response = `💳 *New Transaction*\n`;
     if (project) {
@@ -399,7 +543,22 @@ async function handleTextMessage(
       response += `  ${person}: $${share.toFixed(2)}\n`;
     });
 
-    response += `\n${formatStrategyResult(strategyResult)}`;
+    // Card recommendation (new system)
+    if (userCards.length > 0) {
+      response += `\n${formatRecommendation(cardRec.best)}`;
+      // Show relevant benefits
+      if (cardRec.best.relevantBenefits.length > 0) {
+        response += formatBenefits(cardRec.best.relevantBenefits);
+      }
+    } else {
+      // Prompt user to add cards
+      response += `\n💳 _Add your cards with /cards to see rewards_`;
+    }
+
+    // Suggest better card if missing
+    if (cardRec.missingCardSuggestion) {
+      response += `\n💡 _${cardRec.missingCardSuggestion.reason}_`;
+    }
 
     if (warnings && warnings.length > 0) {
       response += `\n\n⚠️ ${warnings.join(', ')}`;
@@ -1060,13 +1219,110 @@ async function handleCommand(
     }
 
     case '/cards':
+    case '/c': {
+      const userCards = await getUserCards(env, user.id);
+
+      if (userCards.length === 0) {
+        await sendMessage(
+          chatId,
+          `💳 *My Cards*\n\nNo cards added yet.\n\nTap "Add Card" to get started:`,
+          env.TELEGRAM_BOT_TOKEN,
+          {
+            parse_mode: 'Markdown',
+            reply_markup: {
+              inline_keyboard: [
+                [{ text: '➕ Add Card', callback_data: 'card_add' }],
+              ],
+            },
+          }
+        );
+        break;
+      }
+
+      let msg = `💳 *My Cards*\n\n`;
+      userCards.forEach(uc => {
+        const lastFour = uc.lastFour ? ` (...${uc.lastFour})` : '';
+        const name = uc.nickname ?? uc.card.name;
+        msg += `• *${name}*${lastFour}\n`;
+        // Show top reward
+        const topReward = uc.card.rewards[0];
+        if (topReward) {
+          const cat = topReward.category === 'all' ? 'everything' : topReward.category;
+          msg += `  ${topReward.multiplier}x on ${cat}\n`;
+        }
+      });
+
+      await sendMessage(chatId, msg, env.TELEGRAM_BOT_TOKEN, {
+        parse_mode: 'Markdown',
+        reply_markup: {
+          inline_keyboard: [
+            [
+              { text: '➕ Add', callback_data: 'card_add' },
+              { text: '➖ Remove', callback_data: 'card_remove' },
+            ],
+            [{ text: '📋 All Available Cards', callback_data: 'card_browse' }],
+          ],
+        },
+      });
+      break;
+    }
+
+    case '/addcard': {
+      // Show all cards directly - simpler UX
+      const userCards = await getUserCards(env, user.id);
+      const existingCardIds = new Set(userCards.map(uc => uc.cardId));
+
+      // Filter out cards user already has
+      const availableCards = PRESET_CARDS.filter(c => !existingCardIds.has(c.id));
+
+      if (availableCards.length === 0) {
+        await sendMessage(chatId, '✅ You have all available cards added!', env.TELEGRAM_BOT_TOKEN);
+        break;
+      }
+
+      // Build keyboard - 2 cards per row
+      const keyboard: Array<Array<{ text: string; callback_data: string }>> = [];
+      availableCards.forEach((card, i) => {
+        const btn = { text: card.name, callback_data: `cadd_${card.id}` };
+        if (i % 2 === 0) {
+          keyboard.push([btn]);
+        } else {
+          keyboard[keyboard.length - 1].push(btn);
+        }
+      });
+      keyboard.push([{ text: '⬅️ Cancel', callback_data: 'card_cancel' }]);
+
       await sendMessage(
         chatId,
-        `*Configured Cards:*\n\n💳 Amex Cobalt - Dining, Grocery (5x)\n💳 Rogers WE MC - Costco, Foreign (No FX)\n💳 TD CB Visa - Gas (3%)`,
+        `➕ *Add a Card*\n\nTap to add:`,
         env.TELEGRAM_BOT_TOKEN,
-        { parse_mode: 'Markdown' }
+        {
+          parse_mode: 'Markdown',
+          reply_markup: { inline_keyboard: keyboard },
+        }
       );
       break;
+    }
+
+    case '/removecard': {
+      const userCards = await getUserCards(env, user.id);
+      if (userCards.length === 0) {
+        await sendMessage(chatId, '💳 No cards to remove.', env.TELEGRAM_BOT_TOKEN);
+        break;
+      }
+
+      const keyboard = userCards.map(uc => [{
+        text: `❌ ${uc.nickname ?? uc.card.name}`,
+        callback_data: `card_rm_${uc.id.slice(0, 8)}`,
+      }]);
+      keyboard.push([{ text: '⬅️ Cancel', callback_data: 'card_cancel' }]);
+
+      await sendMessage(chatId, '➖ *Remove a Card*\n\nSelect card to remove:', env.TELEGRAM_BOT_TOKEN, {
+        parse_mode: 'Markdown',
+        reply_markup: { inline_keyboard: keyboard },
+      });
+      break;
+    }
 
     // Transaction edit commands
     case '/editamount': {
@@ -1482,6 +1738,142 @@ async function handleCallbackQuery(
           await handleCommand('/deleteproject', chatId, telegramUser, env);
           break;
       }
+      break;
+    }
+
+    case 'card': {
+      // Card management callbacks
+      const chatId = query.message?.chat.id ?? 0;
+      const userId = query.from.id;
+      const subAction = id;
+
+      if (subAction === 'add' || subAction === 'browse') {
+        // Show all available cards
+        let msg = `📋 *Available Cards*\n\n`;
+        const keyboard: Array<Array<{ text: string; callback_data: string }>> = [];
+
+        PRESET_CARDS.forEach((card, i) => {
+          const fee = card.annualFee === 0 ? 'No fee' : `$${card.annualFee}/yr`;
+          const topReward = card.rewards[0];
+          const rewardText = topReward ? `${topReward.multiplier}x ${topReward.category}` : '';
+          msg += `*${card.name}* - ${fee}\n  ${rewardText}\n\n`;
+
+          // Add to keyboard (2 per row)
+          if (i % 2 === 0) {
+            keyboard.push([{ text: card.name, callback_data: `cadd_${card.id}` }]);
+          } else {
+            keyboard[keyboard.length - 1].push({ text: card.name, callback_data: `cadd_${card.id}` });
+          }
+        });
+
+        keyboard.push([{ text: '⬅️ Back', callback_data: 'card_cancel' }]);
+
+        await sendMessage(chatId, msg, env.TELEGRAM_BOT_TOKEN, {
+          parse_mode: 'Markdown',
+          reply_markup: { inline_keyboard: keyboard },
+        });
+      } else if (subAction === 'remove') {
+        await handleCommand('/removecard', chatId, query.from, env);
+      } else if (subAction === 'cancel') {
+        await deleteMessage(chatId, query.message?.message_id ?? 0, env.TELEGRAM_BOT_TOKEN);
+      } else if (subAction.startsWith('cat_')) {
+        // Category-specific card list
+        const cat = subAction.replace('cat_', '');
+        let filteredCards: CreditCard[] = [];
+        let catTitle = '';
+
+        switch (cat) {
+          case 'dining':
+            filteredCards = PRESET_CARDS.filter(c => c.rewards.some(r => r.category === 'dining' || r.category === 'grocery'));
+            catTitle = '🍽️ Dining & Grocery Cards';
+            break;
+          case 'travel':
+            filteredCards = PRESET_CARDS.filter(c => c.rewards.some(r => r.category === 'travel') || c.benefits.some(b => b.triggerCategories?.includes('travel')));
+            catTitle = '✈️ Travel Cards';
+            break;
+          case 'nofx':
+            filteredCards = PRESET_CARDS.filter(c => c.ftf === 0);
+            catTitle = '🌍 No Foreign Transaction Fee';
+            break;
+          case 'cashback':
+            filteredCards = PRESET_CARDS.filter(c => c.rewards.some(r => r.rewardType === 'cashback') || c.annualFee === 0);
+            catTitle = '💵 Cashback & No Fee Cards';
+            break;
+        }
+
+        const keyboard = filteredCards.map(c => [{ text: c.name, callback_data: `cadd_${c.id}` }]);
+        keyboard.push([{ text: '⬅️ Back', callback_data: 'card_add' }]);
+
+        await sendMessage(chatId, `${catTitle}\n\nSelect a card to add:`, env.TELEGRAM_BOT_TOKEN, {
+          reply_markup: { inline_keyboard: keyboard },
+        });
+      } else if (subAction.startsWith('rm_')) {
+        // Remove card
+        const cardIdPrefix = subAction.replace('rm_', '');
+        await env.DB.prepare(
+          'DELETE FROM user_cards WHERE user_id = ? AND id LIKE ?'
+        ).bind(userId, `${cardIdPrefix}%`).run();
+
+        await editMessageText(
+          chatId,
+          query.message?.message_id ?? 0,
+          '✅ Card removed.',
+          env.TELEGRAM_BOT_TOKEN
+        );
+      }
+      break;
+    }
+
+    case 'cadd': {
+      // Add a specific card - id is the card_id
+      const chatId = query.message?.chat.id ?? 0;
+      const userId = query.from.id;
+      const cardId = id;
+
+      const card = getCardById(cardId);
+      if (!card) {
+        await sendMessage(chatId, '❌ Card not found.', env.TELEGRAM_BOT_TOKEN);
+        break;
+      }
+
+      // Check if already added
+      const existing = await env.DB.prepare(
+        'SELECT id FROM user_cards WHERE user_id = ? AND card_id = ?'
+      ).bind(userId, cardId).first();
+
+      if (existing) {
+        await sendMessage(chatId, `ℹ️ You already have *${card.name}* added.`, env.TELEGRAM_BOT_TOKEN, { parse_mode: 'Markdown' });
+        break;
+      }
+
+      // Add the card
+      await env.DB.prepare(`
+        INSERT INTO user_cards (id, user_id, card_id, added_at)
+        VALUES (?, ?, ?, ?)
+      `).bind(crypto.randomUUID(), userId, cardId, new Date().toISOString()).run();
+
+      // Show confirmation with card details
+      let msg = `✅ Added *${card.name}*\n\n`;
+      msg += `💰 *Rewards:*\n`;
+      card.rewards.slice(0, 3).forEach(r => {
+        const cat = r.category === 'all' ? 'All purchases' : r.category;
+        msg += `  • ${r.multiplier}x on ${cat}\n`;
+      });
+
+      if (card.benefits.length > 0) {
+        msg += `\n🎁 *Benefits:*\n`;
+        card.benefits.slice(0, 2).forEach(b => {
+          msg += `  ${benefitEmoji(b.type)} ${b.name}\n`;
+        });
+      }
+
+      await editMessageText(
+        chatId,
+        query.message?.message_id ?? 0,
+        msg,
+        env.TELEGRAM_BOT_TOKEN,
+        { parse_mode: 'Markdown' }
+      );
       break;
     }
   }
