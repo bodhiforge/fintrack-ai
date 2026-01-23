@@ -211,8 +211,8 @@ fintrack-ai/
 
 ## Roadmap
 
-- [ ] Core parsing logic
-- [ ] Credit card strategy engine
+- [x] Core parsing logic
+- [x] Credit card strategy engine
 - [ ] Telegram bot integration
 - [ ] Gmail webhook integration
 - [ ] Multi-currency with live rates
