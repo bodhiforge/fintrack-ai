@@ -10,8 +10,10 @@
 
 import {
   TransactionParser,
-  checkCardStrategy,
-  formatStrategyResult,
+  recommendCard,
+  formatRecommendation,
+  PRESET_CARDS,
+  type UserCardWithDetails,
 } from '@fintrack-ai/core';
 
 // ============================================
@@ -123,21 +125,36 @@ async function processEmail(email: EmailPayload, env: Env): Promise<void> {
     email.subject
   );
 
-  // Check card strategy
-  const strategyResult = checkCardStrategy(parsed);
+  // Get card recommendation (using preset cards as fallback)
+  const userCards: UserCardWithDetails[] = PRESET_CARDS.slice(0, 3).map((card, index) => ({
+    id: `preset-${index}`,
+    odId: index,
+    cardId: card.id,
+    isActive: true,
+    addedAt: new Date().toISOString(),
+    card,
+  }));
+
+  const isForeign = parsed.currency !== 'CAD';
+  const recommendation = recommendCard(parsed, userCards, isForeign);
 
   // Build Telegram message
-  let message = `🔔 *Bank Alert Detected*\n\n`;
-  message += `📍 ${parsed.merchant}\n`;
-  message += `💰 $${parsed.amount.toFixed(2)} ${parsed.currency}\n`;
-  message += `🏷️ ${parsed.category}\n`;
-  message += `💳 Card ****${parsed.cardLastFour}\n`;
-  message += `📅 ${parsed.date}\n\n`;
-  message += formatStrategyResult(strategyResult);
+  const warningText = warnings != null && warnings.length > 0
+    ? `\n\n⚠️ _${warnings.join(', ')}_`
+    : '';
 
-  if (warnings && warnings.length > 0) {
-    message += `\n\n⚠️ _${warnings.join(', ')}_`;
-  }
+  const message = [
+    '🔔 *Bank Alert Detected*',
+    '',
+    `📍 ${parsed.merchant}`,
+    `💰 $${parsed.amount.toFixed(2)} ${parsed.currency}`,
+    `🏷️ ${parsed.category}`,
+    `💳 Card ****${parsed.cardLastFour}`,
+    `📅 ${parsed.date}`,
+    '',
+    formatRecommendation(recommendation.best),
+    warningText,
+  ].join('\n');
 
   // Send to Telegram
   await sendTelegramMessage(

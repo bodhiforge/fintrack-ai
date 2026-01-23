@@ -6,6 +6,9 @@
 // Types
 export * from './types.js';
 
+// Constants
+export * from './constants.js';
+
 // Parser
 export {
   TransactionParser,
@@ -23,14 +26,6 @@ export {
   convertCurrency,
   DEFAULT_RATES,
 } from './splitter.js';
-
-// Strategy (legacy - use cards.ts for new implementations)
-export {
-  CardStrategyEngine,
-  DEFAULT_CARD_STRATEGIES,
-  checkCardStrategy,
-  formatStrategyResult,
-} from './strategy.js';
 
 // Cards & Recommendation
 export * from './cards.js';

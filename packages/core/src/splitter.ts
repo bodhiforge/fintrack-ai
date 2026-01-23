@@ -30,42 +30,16 @@ export function splitExpense(request: SplitRequest): SplitResult {
 
   // Filter out excluded participants
   const activeParticipants = participants.filter(
-    (p) => !excludedParticipants.includes(p)
+    (participant) => !excludedParticipants.includes(participant)
   );
 
   if (activeParticipants.length === 0) {
     throw new Error('No participants to split among');
   }
 
-  let shares: Record<string, number>;
-
-  if (customSplits) {
-    // Use custom split amounts
-    shares = { ...customSplits };
-
-    // Validate custom splits sum to total
-    const customTotal = Object.values(shares).reduce((sum, v) => sum + v, 0);
-    if (Math.abs(customTotal - totalAmount) > 0.01) {
-      throw new Error(
-        `Custom splits (${customTotal}) don't match total (${totalAmount})`
-      );
-    }
-  } else {
-    // Equal split
-    const perPerson = roundCurrency(totalAmount / activeParticipants.length);
-    shares = {};
-
-    // Handle rounding: give remainder to first person
-    let remaining = totalAmount;
-    activeParticipants.forEach((person, index) => {
-      if (index === activeParticipants.length - 1) {
-        shares[person] = roundCurrency(remaining);
-      } else {
-        shares[person] = perPerson;
-        remaining -= perPerson;
-      }
-    });
-  }
+  const shares = customSplits != null
+    ? validateCustomSplits(customSplits, totalAmount)
+    : calculateEqualSplits(activeParticipants, totalAmount);
 
   return {
     shares,
@@ -73,6 +47,35 @@ export function splitExpense(request: SplitRequest): SplitResult {
     totalAmount,
     currency,
   };
+}
+
+function validateCustomSplits(
+  customSplits: Readonly<Record<string, number>>,
+  totalAmount: number
+): Readonly<Record<string, number>> {
+  const customTotal = Object.values(customSplits).reduce((sum, value) => sum + value, 0);
+  if (Math.abs(customTotal - totalAmount) > 0.01) {
+    throw new Error(
+      `Custom splits (${customTotal}) don't match total (${totalAmount})`
+    );
+  }
+  return customSplits;
+}
+
+function calculateEqualSplits(
+  participants: readonly string[],
+  totalAmount: number
+): Readonly<Record<string, number>> {
+  const perPerson = roundCurrency(totalAmount / participants.length);
+  const lastIndex = participants.length - 1;
+
+  return participants.reduce<Record<string, number>>((shares, person, index) => {
+    const previousTotal = Object.values(shares).reduce((sum, value) => sum + value, 0);
+    const share = index === lastIndex
+      ? roundCurrency(totalAmount - previousTotal)
+      : perPerson;
+    return { ...shares, [person]: share };
+  }, {});
 }
 
 // ============================================
@@ -84,27 +87,35 @@ export function splitExpense(request: SplitRequest): SplitResult {
  * Positive balance = others owe you
  * Negative balance = you owe others
  */
-export function calculateBalances(transactions: Transaction[]): Balance[] {
-  const balanceMap = new Map<string, number>();
-
-  transactions.forEach((tx) => {
-    const { payer, splits, amount } = tx;
+export function calculateBalances(transactions: readonly Transaction[]): readonly Balance[] {
+  const balanceMap = transactions.reduce<Map<string, number>>((map, transaction) => {
+    const { payer, splits, amount } = transaction;
 
     // Payer paid the full amount
-    balanceMap.set(payer, (balanceMap.get(payer) || 0) + amount);
+    const payerBalance = map.get(payer) ?? 0;
+    const updatedMap = new Map(map);
+    updatedMap.set(payer, payerBalance + amount);
 
     // Each person owes their share
-    Object.entries(splits).forEach(([person, share]) => {
-      balanceMap.set(person, (balanceMap.get(person) || 0) - share);
-    });
-  });
+    return Object.entries(splits).reduce((accumulator, [person, share]) => {
+      const personBalance = accumulator.get(person) ?? 0;
+      const result = new Map(accumulator);
+      result.set(person, personBalance - share);
+      return result;
+    }, updatedMap);
+  }, new Map<string, number>());
 
   return Array.from(balanceMap.entries())
     .map(([person, netBalance]) => ({
       person,
       netBalance: roundCurrency(netBalance),
     }))
-    .filter((b) => Math.abs(b.netBalance) > 0.01);
+    .filter((balance) => Math.abs(balance.netBalance) > 0.01);
+}
+
+interface PartyBalance {
+  readonly person: string;
+  readonly amount: number;
 }
 
 /**
@@ -112,70 +123,93 @@ export function calculateBalances(transactions: Transaction[]): Balance[] {
  * Uses a greedy algorithm to match largest creditor with largest debtor
  */
 export function simplifyDebts(
-  transactions: Transaction[],
+  transactions: readonly Transaction[],
   currency: Currency = 'CAD'
-): Settlement[] {
+): readonly Settlement[] {
   const balances = calculateBalances(transactions);
 
   // Separate into creditors (positive) and debtors (negative)
-  const creditors: Array<{ person: string; amount: number }> = [];
-  const debtors: Array<{ person: string; amount: number }> = [];
-
-  balances.forEach(({ person, netBalance }) => {
-    if (netBalance > 0.01) {
-      creditors.push({ person, amount: netBalance });
-    } else if (netBalance < -0.01) {
-      debtors.push({ person, amount: -netBalance });
-    }
-  });
+  const { creditors, debtors } = balances.reduce<{
+    creditors: readonly PartyBalance[];
+    debtors: readonly PartyBalance[];
+  }>(
+    (accumulator, { person, netBalance }) => {
+      if (netBalance > 0.01) {
+        return {
+          ...accumulator,
+          creditors: [...accumulator.creditors, { person, amount: netBalance }],
+        };
+      }
+      if (netBalance < -0.01) {
+        return {
+          ...accumulator,
+          debtors: [...accumulator.debtors, { person, amount: -netBalance }],
+        };
+      }
+      return accumulator;
+    },
+    { creditors: [], debtors: [] }
+  );
 
   // Sort by amount descending
-  creditors.sort((a, b) => b.amount - a.amount);
-  debtors.sort((a, b) => b.amount - a.amount);
+  const sortedCreditors = [...creditors].sort((a, b) => b.amount - a.amount);
+  const sortedDebtors = [...debtors].sort((a, b) => b.amount - a.amount);
 
-  const settlements: Settlement[] = [];
+  // Recursive greedy matching
+  return matchDebts(sortedCreditors, sortedDebtors, currency);
+}
 
-  // Greedy matching
-  while (creditors.length > 0 && debtors.length > 0) {
-    const creditor = creditors[0];
-    const debtor = debtors[0];
+function matchDebts(
+  creditors: readonly PartyBalance[],
+  debtors: readonly PartyBalance[],
+  currency: Currency
+): readonly Settlement[] {
+  if (creditors.length === 0 || debtors.length === 0) {
+    return [];
+  }
 
-    const amount = Math.min(creditor.amount, debtor.amount);
+  const [creditor, ...remainingCreditors] = creditors;
+  const [debtor, ...remainingDebtors] = debtors;
 
-    if (amount > 0.01) {
-      settlements.push({
+  const amount = Math.min(creditor.amount, debtor.amount);
+
+  const settlement: Settlement | null = amount > 0.01
+    ? {
         from: debtor.person,
         to: creditor.person,
         amount: roundCurrency(amount),
         currency,
-      });
-    }
+      }
+    : null;
 
-    creditor.amount -= amount;
-    debtor.amount -= amount;
+  const newCreditorAmount = creditor.amount - amount;
+  const newDebtorAmount = debtor.amount - amount;
 
-    // Remove settled parties
-    if (creditor.amount < 0.01) {
-      creditors.shift();
-    }
-    if (debtor.amount < 0.01) {
-      debtors.shift();
-    }
-  }
+  const updatedCreditors = newCreditorAmount > 0.01
+    ? [{ person: creditor.person, amount: newCreditorAmount }, ...remainingCreditors]
+    : remainingCreditors;
 
-  return settlements;
+  const updatedDebtors = newDebtorAmount > 0.01
+    ? [{ person: debtor.person, amount: newDebtorAmount }, ...remainingDebtors]
+    : remainingDebtors;
+
+  const futureSettlements = matchDebts(updatedCreditors, updatedDebtors, currency);
+
+  return settlement != null
+    ? [settlement, ...futureSettlements]
+    : futureSettlements;
 }
 
 /**
  * Generate human-readable settlement summary
  */
-export function formatSettlements(settlements: Settlement[]): string {
+export function formatSettlements(settlements: readonly Settlement[]): string {
   if (settlements.length === 0) {
     return 'All settled up! No payments needed.';
   }
 
   const lines = settlements.map(
-    (s) => `${s.from} → ${s.to}: $${s.amount.toFixed(2)} ${s.currency}`
+    (settlement) => `${settlement.from} → ${settlement.to}: $${settlement.amount.toFixed(2)} ${settlement.currency}`
   );
 
   return `To settle up:\n${lines.join('\n')}`;
@@ -186,9 +220,9 @@ export function formatSettlements(settlements: Settlement[]): string {
 // ============================================
 
 export interface NaturalLanguageSplitResult {
-  excludedParticipants: string[];
-  customSplits?: Record<string, number>;
-  notes?: string;
+  readonly excludedParticipants: readonly string[];
+  readonly customSplits?: Readonly<Record<string, number>>;
+  readonly notes?: string;
 }
 
 /**
@@ -200,10 +234,9 @@ export interface NaturalLanguageSplitResult {
  */
 export function parseNaturalLanguageSplit(
   text: string,
-  allParticipants: string[]
+  allParticipants: readonly string[]
 ): NaturalLanguageSplitResult {
   const lowerText = text.toLowerCase();
-  const excluded: string[] = [];
 
   // Patterns for exclusion
   const exclusionPatterns = [
@@ -212,19 +245,20 @@ export function parseNaturalLanguageSplit(
     /(?:no|not)\s+(\w+)/gi,
   ];
 
-  for (const pattern of exclusionPatterns) {
-    let match;
-    while ((match = pattern.exec(lowerText)) !== null) {
+  const excluded = exclusionPatterns.reduce<readonly string[]>((accumulator, pattern) => {
+    const matches = Array.from(lowerText.matchAll(pattern));
+    return matches.reduce<readonly string[]>((innerAccumulator, match) => {
       const name = match[1];
       // Find matching participant (case-insensitive)
       const participant = allParticipants.find(
         (p) => p.toLowerCase() === name.toLowerCase()
       );
-      if (participant && !excluded.includes(participant)) {
-        excluded.push(participant);
+      if (participant != null && !innerAccumulator.includes(participant)) {
+        return [...innerAccumulator, participant];
       }
-    }
-  }
+      return innerAccumulator;
+    }, accumulator);
+  }, []);
 
   return {
     excludedParticipants: excluded,
