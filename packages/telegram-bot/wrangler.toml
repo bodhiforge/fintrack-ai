@@ -1,0 +1,16 @@
+name = "fintrack-telegram-bot"
+main = "src/index.ts"
+compatibility_date = "2024-01-01"
+
+[vars]
+ENVIRONMENT = "production"
+
+# Secrets (set via `wrangler secret put`)
+# OPENAI_API_KEY
+# TELEGRAM_BOT_TOKEN
+# TELEGRAM_WEBHOOK_SECRET
+
+[[d1_databases]]
+binding = "DB"
+database_name = "fintrack-db"
+database_id = "9a0fba96-41c9-4be3-ab97-14bfa6f3777a"
