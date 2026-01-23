@@ -436,7 +436,7 @@ async function handleCommand(
     case '/help':
       await sendMessage(
         chatId,
-        `*Commands:*\n/balance - Show balances\n/settle - Calculate settlements\n/history - Recent transactions\n/cards - Configured cards\n\n*Project Commands:*\n/newproject <name> - Create project\n/join <code> - Join via invite\n/switch - Change project\n/projects - List projects\n/invite - Show invite code\n\n*Expense format:*\nJust type naturally!\n"lunch 30 at McDonald's"\n"groceries 80 at Costco"`,
+        `*Commands:*\n/balance - Show balances\n/settle - Calculate settlements\n/history - Recent transactions\n/cards - Configured cards\n\n*Project Commands:*\n/newproject <name> - Create project\n/join <code> - Join via invite\n/switch - Change project\n/projects - List projects\n/invite - Show invite code\n/leave - Leave current project\n/archive - Archive project (owner)\n/rename <name> - Rename project (owner)\n\n*Expense format:*\nJust type naturally!\n"lunch 30 at McDonald's"\n"groceries 80 at Costco"`,
         env.TELEGRAM_BOT_TOKEN,
         { parse_mode: 'Markdown' }
       );
@@ -556,7 +556,8 @@ async function handleCommand(
           (SELECT COUNT(*) FROM transactions WHERE project_id = p.id AND status = 'confirmed') as tx_count
         FROM projects p
         JOIN project_members pm ON p.id = pm.project_id
-        WHERE pm.user_id = ? AND p.is_active = 1
+        WHERE pm.user_id = ?
+        ORDER BY p.is_active DESC, p.created_at DESC
       `).bind(user.id).all();
 
       if (!userProjects.results || userProjects.results.length === 0) {
@@ -567,9 +568,13 @@ async function handleCommand(
       let msg = '📁 *My Projects*\n\n';
       for (const p of userProjects.results) {
         const current = p.id === project?.id ? ' ← current' : '';
-        msg += `*${p.name}*${current}\n`;
+        const archived = p.is_active === 0 ? ' 📦' : '';
+        msg += `*${p.name}*${current}${archived}\n`;
         msg += `  👥 ${p.member_count} members | 📝 ${p.tx_count} transactions\n`;
-        msg += `  📎 \`${p.invite_code}\`\n\n`;
+        if (p.is_active === 1) {
+          msg += `  📎 \`${p.invite_code}\`\n`;
+        }
+        msg += '\n';
       }
 
       await sendMessage(chatId, msg, env.TELEGRAM_BOT_TOKEN, { parse_mode: 'Markdown' });
@@ -585,6 +590,100 @@ async function handleCommand(
       await sendMessage(
         chatId,
         `📎 *${project.name}* invite code:\n\n\`${project.inviteCode}\`\n\nShare this with your group!`,
+        env.TELEGRAM_BOT_TOKEN,
+        { parse_mode: 'Markdown' }
+      );
+      break;
+    }
+
+    case '/leave': {
+      if (!project || project.id === 'default') {
+        await sendMessage(chatId, '❌ Cannot leave the default project.', env.TELEGRAM_BOT_TOKEN);
+        break;
+      }
+
+      // Check if user is owner
+      if (project.ownerId === user.id) {
+        await sendMessage(chatId, '❌ Owner cannot leave. Transfer ownership or /archive the project.', env.TELEGRAM_BOT_TOKEN);
+        break;
+      }
+
+      // Remove from project
+      await env.DB.prepare(
+        'DELETE FROM project_members WHERE project_id = ? AND user_id = ?'
+      ).bind(project.id, user.id).run();
+
+      // Switch to default project
+      await env.DB.prepare(
+        'UPDATE users SET current_project_id = ? WHERE id = ?'
+      ).bind('default', user.id).run();
+
+      await sendMessage(
+        chatId,
+        `👋 Left *${project.name}*. Switched to Daily.`,
+        env.TELEGRAM_BOT_TOKEN,
+        { parse_mode: 'Markdown' }
+      );
+      break;
+    }
+
+    case '/archive': {
+      if (!project || project.id === 'default') {
+        await sendMessage(chatId, '❌ Cannot archive the default project.', env.TELEGRAM_BOT_TOKEN);
+        break;
+      }
+
+      // Check if user is owner
+      if (project.ownerId !== user.id) {
+        await sendMessage(chatId, '❌ Only the project owner can archive.', env.TELEGRAM_BOT_TOKEN);
+        break;
+      }
+
+      // Archive the project
+      await env.DB.prepare(
+        'UPDATE projects SET is_active = 0 WHERE id = ?'
+      ).bind(project.id).run();
+
+      // Switch all members to default
+      await env.DB.prepare(`
+        UPDATE users SET current_project_id = 'default'
+        WHERE current_project_id = ?
+      `).bind(project.id).run();
+
+      await sendMessage(
+        chatId,
+        `📦 Archived *${project.name}*.\n\nHistorical data preserved. Use /projects to see archived.`,
+        env.TELEGRAM_BOT_TOKEN,
+        { parse_mode: 'Markdown' }
+      );
+      break;
+    }
+
+    case '/rename': {
+      const newName = args.join(' ').replace(/"/g, '').trim();
+      if (!newName) {
+        await sendMessage(chatId, '❌ Usage: /rename "New Name"', env.TELEGRAM_BOT_TOKEN);
+        break;
+      }
+
+      if (!project || project.id === 'default') {
+        await sendMessage(chatId, '❌ Cannot rename the default project.', env.TELEGRAM_BOT_TOKEN);
+        break;
+      }
+
+      // Check if user is owner
+      if (project.ownerId !== user.id) {
+        await sendMessage(chatId, '❌ Only the project owner can rename.', env.TELEGRAM_BOT_TOKEN);
+        break;
+      }
+
+      await env.DB.prepare(
+        'UPDATE projects SET name = ? WHERE id = ?'
+      ).bind(newName, project.id).run();
+
+      await sendMessage(
+        chatId,
+        `✅ Renamed to *${newName}*`,
         env.TELEGRAM_BOT_TOKEN,
         { parse_mode: 'Markdown' }
       );
