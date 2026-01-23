@@ -208,7 +208,7 @@ export function parseNaturalLanguageSplit(
   // Patterns for exclusion
   const exclusionPatterns = [
     /(?:exclude|without|except|not including|minus)\s+(\w+)/gi,
-    /(\w+)\s+(?:didn't|did not|wasn't|was not|isn't|is not)\s+(?:join|participate|there|included|eating|drinking)/gi,
+    /(\w+)\s+(?:didn't|didnt|did not|wasn't|wasnt|was not|isn't|isnt|is not)\s+(?:join|participate|there|included|eating|drinking)/gi,
     /(?:no|not)\s+(\w+)/gi,
   ];
 
@@ -255,14 +255,15 @@ export function convertCurrency(
     return amount;
   }
 
-  // Rates should be relative to a base (e.g., CAD)
-  // rate[USD] = 1.35 means 1 CAD = 0.74 USD, or 1 USD = 1.35 CAD
+  // Rates are "1 unit of currency = X CAD"
+  // e.g., rate[USD] = 1.35 means 1 USD = 1.35 CAD
   const fromRate = rates[fromCurrency] || 1;
   const toRate = rates[toCurrency] || 1;
 
-  // Convert: amount in fromCurrency -> base -> toCurrency
-  const inBase = amount / fromRate;
-  const inTarget = inBase * toRate;
+  // Convert: amount in fromCurrency -> CAD -> toCurrency
+  // 100 USD * 1.35 = 135 CAD, 135 CAD / 1 = 135 CAD
+  const inBase = amount * fromRate;
+  const inTarget = inBase / toRate;
 
   return roundCurrency(inTarget);
 }

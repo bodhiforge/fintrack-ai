@@ -60,10 +60,19 @@ export class CardStrategyEngine {
    */
   private initMerchantRules(): void {
     // Costco rule: Only Mastercard accepted
-    this.merchantRules.set('costco', ['Rogers World Elite Mastercard']);
+    // Find any Mastercard in configured strategies
+    const mastercards = this.strategies
+      .filter((s) =>
+        s.cardName.toLowerCase().includes('mastercard') ||
+        s.cardName.toLowerCase().includes(' mc')
+      )
+      .map((s) => s.cardName);
+
+    if (mastercards.length > 0) {
+      this.merchantRules.set('costco', mastercards);
+    }
 
     // Add more merchant-specific rules as needed
-    this.merchantRules.set('amazon', ['Amex Cobalt']); // For groceries via Amazon
   }
 
   /**
@@ -107,26 +116,31 @@ export class CardStrategyEngine {
       }
     }
 
+    // Check if it's a foreign transaction (prioritize FX fee check)
+    const isForeign = currency !== 'CAD';
+
+    if (isForeign) {
+      const bestForeignCard = this.findBestCardForForeign();
+      // Check if current card has FX fee and a better option exists
+      if (
+        bestForeignCard &&
+        cardUsed?.foreignTxFee !== undefined &&
+        cardUsed.foreignTxFee > 0 &&
+        cardUsed.cardName !== bestForeignCard.cardName
+      ) {
+        return {
+          isOptimal: false,
+          cardUsed: cardUsedName,
+          recommendedCard: bestForeignCard.cardName,
+          suggestion: `Foreign transaction. ${bestForeignCard.cardName} has no FX fee.`,
+        };
+      }
+    }
+
     // Check category-based rules
     const bestCardForCategory = this.findBestCardForCategory(category);
 
     if (bestCardForCategory && cardUsed?.cardName !== bestCardForCategory.cardName) {
-      // Check if it's a foreign transaction
-      const isForeign = currency !== 'CAD';
-
-      if (isForeign) {
-        // For foreign transactions, consider FX fees
-        const bestForeignCard = this.findBestCardForForeign();
-        if (bestForeignCard && cardUsed?.cardName !== bestForeignCard.cardName) {
-          return {
-            isOptimal: false,
-            cardUsed: cardUsedName,
-            recommendedCard: bestForeignCard.cardName,
-            suggestion: `Foreign transaction. ${bestForeignCard.cardName} has no FX fee.`,
-          };
-        }
-      }
-
       return {
         isOptimal: false,
         cardUsed: cardUsedName,

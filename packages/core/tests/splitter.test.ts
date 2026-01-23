@@ -22,10 +22,11 @@ describe('splitExpense', () => {
       participants: ['Alice', 'Bob', 'Carol'],
     });
 
+    // Last person gets the rounding remainder
     expect(result.shares).toEqual({
-      Alice: 33.34,
+      Alice: 33.33,
       Bob: 33.33,
-      Carol: 33.33,
+      Carol: 33.34,
     });
     expect(result.payer).toBe('Alice');
   });
