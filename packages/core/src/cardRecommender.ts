@@ -21,19 +21,19 @@ import {
 // ============================================
 
 export interface UserCardWithDetails extends UserCard {
-  card: CreditCard;
+  readonly card: CreditCard;
 }
 
 export interface RecommendationResult {
-  best: CardRecommendation;
-  alternatives: CardRecommendation[];
-  missingCardSuggestion?: CardSuggestion;
+  readonly best: CardRecommendation;
+  readonly alternatives: readonly CardRecommendation[];
+  readonly missingCardSuggestion?: CardSuggestion;
 }
 
 export interface CardSuggestion {
-  card: CreditCard;
-  reason: string;
-  potentialSavings: string;
+  readonly card: CreditCard;
+  readonly reason: string;
+  readonly potentialSavings: string;
 }
 
 // ============================================
@@ -61,10 +61,10 @@ const LOCATION_CURRENCY: Record<string, string> = {
 };
 
 export function detectForeignByLocation(location: string | undefined, currency: string): {
-  isForeign: boolean;
-  warning?: string;
+  readonly isForeign: boolean;
+  readonly warning?: string;
 } {
-  if (!location) return { isForeign: currency !== 'CAD' };
+  if (location == null || location === '') return { isForeign: currency !== 'CAD' };
 
   const normalizedLocation = location.toLowerCase().trim();
   const expectedCurrency = LOCATION_CURRENCY[normalizedLocation];
@@ -85,12 +85,12 @@ export function detectForeignByLocation(location: string | undefined, currency: 
 // ============================================
 
 interface MerchantRestriction {
-  pattern: RegExp;
-  allowedNetworks: string[];
-  reason: string;
+  readonly pattern: RegExp;
+  readonly allowedNetworks: readonly string[];
+  readonly reason: string;
 }
 
-const MERCHANT_RESTRICTIONS: MerchantRestriction[] = [
+const MERCHANT_RESTRICTIONS: readonly MerchantRestriction[] = [
   {
     pattern: /costco|wholesale/i,
     allowedNetworks: ['mastercard', 'visa'],  // Costco doesn't accept Amex
@@ -99,7 +99,7 @@ const MERCHANT_RESTRICTIONS: MerchantRestriction[] = [
 ];
 
 function checkMerchantRestrictions(merchant: string): MerchantRestriction | undefined {
-  return MERCHANT_RESTRICTIONS.find(r => r.pattern.test(merchant));
+  return MERCHANT_RESTRICTIONS.find(restriction => restriction.pattern.test(merchant));
 }
 
 // ============================================
@@ -108,7 +108,7 @@ function checkMerchantRestrictions(merchant: string): MerchantRestriction | unde
 
 export function recommendCard(
   transaction: ParsedTransaction,
-  userCards: UserCardWithDetails[],
+  userCards: readonly UserCardWithDetails[],
   isForeign: boolean = false
 ): RecommendationResult {
   if (userCards.length === 0) {
@@ -123,50 +123,38 @@ export function recommendCard(
 
   // Check for merchant restrictions (e.g., Costco doesn't accept Amex)
   const restriction = checkMerchantRestrictions(transaction.merchant);
-  let eligibleCards = userCards.filter(uc => uc.card);
-  let restrictionWarning: string | undefined;
+  const cardsWithDetails = userCards.filter(userCard => userCard.card != null);
 
-  if (restriction) {
-    const filtered = eligibleCards.filter(uc =>
-      restriction.allowedNetworks.includes(uc.card.network)
-    );
-    if (filtered.length > 0) {
-      eligibleCards = filtered;
-      restrictionWarning = restriction.reason;
-    }
-  }
+  const { eligibleCards, restrictionWarning } = restriction != null
+    ? applyMerchantRestriction(cardsWithDetails, restriction)
+    : { eligibleCards: cardsWithDetails, restrictionWarning: undefined };
 
   // Calculate reward for each eligible card
   const recommendations = eligibleCards
     .map(userCard => calculateRecommendation(transaction, userCard, isForeign))
-    .sort((a, b) => b.rewardValue - a.rewardValue);
+    .sort((cardA, cardB) => cardB.rewardValue - cardA.rewardValue);
 
   if (recommendations.length === 0) {
     // All cards filtered out by restriction
-    const emptyRec = createEmptyRecommendation();
-    emptyRec.warning = restriction?.reason;
     return {
-      best: emptyRec,
+      best: { ...createEmptyRecommendation(), warning: restriction?.reason },
       alternatives: [],
       missingCardSuggestion: suggestCardForMerchant(transaction.merchant),
     };
   }
 
-  const best = recommendations[0];
-  const alternatives = recommendations.slice(1, 3);
+  const [firstRecommendation, ...restRecommendations] = recommendations;
+  const alternatives = restRecommendations.slice(0, 2);
 
-  // Add restriction warning to best card
-  if (restrictionWarning) {
-    best.warning = restrictionWarning;
-  }
+  // Check if best is actually optimal
+  const isOptimal = alternatives.length === 0 ||
+    (firstRecommendation.rewardValue - alternatives[0].rewardValue) >= 0.01;
 
-  // Mark if best is actually optimal
-  if (alternatives.length > 0) {
-    const diff = best.rewardValue - alternatives[0].rewardValue;
-    if (diff < 0.01) {
-      best.isOptimal = false;
-    }
-  }
+  const best: CardRecommendation = {
+    ...firstRecommendation,
+    isOptimal,
+    warning: restrictionWarning,
+  };
 
   // Check if user is missing a better card for this category
   const missingCardSuggestion = checkMissingCard(transaction, userCards, best, restriction);
@@ -176,6 +164,18 @@ export function recommendCard(
     alternatives,
     missingCardSuggestion,
   };
+}
+
+function applyMerchantRestriction(
+  cards: readonly UserCardWithDetails[],
+  restriction: MerchantRestriction
+): { eligibleCards: readonly UserCardWithDetails[]; restrictionWarning: string | undefined } {
+  const filtered = cards.filter(userCard =>
+    restriction.allowedNetworks.includes(userCard.card.network)
+  );
+  return filtered.length > 0
+    ? { eligibleCards: filtered, restrictionWarning: restriction.reason }
+    : { eligibleCards: cards, restrictionWarning: undefined };
 }
 
 // ============================================
@@ -192,33 +192,15 @@ function calculateRecommendation(
   const category = transaction.category;
 
   // Find the best matching reward rule
-  let bestRule: RewardRule | undefined;
-
-  // Check for foreign transaction rule first
-  if (isForeign) {
-    bestRule = card.rewards.find(r => r.category === 'foreign');
-  }
-
-  // Check category-specific rule
-  if (!bestRule) {
-    bestRule = card.rewards.find(r => r.category === category);
-  }
-
-  // Fall back to 'all' rule
-  if (!bestRule) {
-    bestRule = card.rewards.find(r => r.category === 'all');
-  }
+  const bestRule = findBestRewardRule(card.rewards, category, isForeign);
 
   // Calculate reward
-  const reward = bestRule ? formatReward(amount, bestRule) : 'No rewards';
-  const rewardValue = bestRule ? calculateRewardValue(amount, bestRule) : 0;
+  const reward = bestRule != null ? formatReward(amount, bestRule) : 'No rewards';
+  const rewardValue = bestRule != null ? calculateRewardValue(amount, bestRule) : 0;
 
   // Adjust for FX fee if foreign
-  let adjustedRewardValue = rewardValue;
-  if (isForeign && card.ftf > 0) {
-    const fxFee = amount * (card.ftf / 100);
-    adjustedRewardValue = rewardValue - fxFee;
-  }
+  const fxFeeDeduction = isForeign && card.ftf > 0 ? amount * (card.ftf / 100) : 0;
+  const adjustedRewardValue = rewardValue - fxFeeDeduction;
 
   // Get relevant benefits
   const relevantBenefits = getRelevantBenefits(transaction, card);
@@ -231,6 +213,25 @@ function calculateRecommendation(
     rewardValue: adjustedRewardValue,
     relevantBenefits,
   };
+}
+
+function findBestRewardRule(
+  rewards: readonly RewardRule[],
+  category: Category,
+  isForeign: boolean
+): RewardRule | undefined {
+  // Check for foreign transaction rule first
+  if (isForeign) {
+    const foreignRule = rewards.find(rule => rule.category === 'foreign');
+    if (foreignRule != null) return foreignRule;
+  }
+
+  // Check category-specific rule
+  const categoryRule = rewards.find(rule => rule.category === category);
+  if (categoryRule != null) return categoryRule;
+
+  // Fall back to 'all' rule
+  return rewards.find(rule => rule.category === 'all');
 }
 
 function getRelevantBenefits(
@@ -260,27 +261,27 @@ function getRelevantBenefits(
 
 function checkMissingCard(
   transaction: ParsedTransaction,
-  userCards: UserCardWithDetails[],
+  userCards: readonly UserCardWithDetails[],
   currentBest: CardRecommendation,
-  restriction?: { allowedNetworks: string[] }
+  restriction?: { readonly allowedNetworks: readonly string[] }
 ): CardSuggestion | undefined {
   const category = transaction.category;
-  const userCardIds = new Set(userCards.map(uc => uc.cardId));
+  const userCardIds = new Set(userCards.map(userCard => userCard.cardId));
 
   // Find the best card for this category that user doesn't have
   // Respect merchant restrictions
   const bestAvailable = PRESET_CARDS
-    .filter(c => !userCardIds.has(c.id))
-    .filter(c => !restriction || restriction.allowedNetworks.includes(c.network))
+    .filter(card => !userCardIds.has(card.id))
+    .filter(card => restriction == null || restriction.allowedNetworks.includes(card.network))
     .map(card => {
-      const rule = card.rewards.find(r => r.category === category) ??
-                   card.rewards.find(r => r.category === 'all');
-      const value = rule ? calculateRewardValue(transaction.amount, rule) : 0;
+      const rule = card.rewards.find(rewardRule => rewardRule.category === category) ??
+                   card.rewards.find(rewardRule => rewardRule.category === 'all');
+      const value = rule != null ? calculateRewardValue(transaction.amount, rule) : 0;
       return { card, value, rule };
     })
-    .sort((a, b) => b.value - a.value)[0];
+    .sort((cardA, cardB) => cardB.value - cardA.value)[0];
 
-  if (!bestAvailable || !bestAvailable.rule) return undefined;
+  if (bestAvailable == null || bestAvailable.rule == null) return undefined;
 
   // Only suggest if significantly better (>50% more rewards)
   const improvement = bestAvailable.value - currentBest.rewardValue;
@@ -358,61 +359,66 @@ function createEmptyRecommendation(): CardRecommendation {
 // Formatting Helpers
 // ============================================
 
-export function formatRecommendation(rec: CardRecommendation): string {
-  let msg = '';
+export function formatRecommendation(recommendation: CardRecommendation): string {
+  const parts: string[] = [];
 
   // Show warning first if any (e.g., Costco restriction)
-  if (rec.warning) {
-    msg += `⚠️ _${rec.warning}_\n\n`;
+  if (recommendation.warning != null) {
+    parts.push(`⚠️ _${recommendation.warning}_\n`);
   }
 
-  if (rec.isOptimal) {
-    msg += `✅ *Use ${rec.card.name}*\n`;
-    msg += `💰 Earn ${rec.reward}\n`;
+  if (recommendation.isOptimal) {
+    parts.push(`✅ *Use ${recommendation.card.name}*`);
+    parts.push(`💰 Earn ${recommendation.reward}`);
   } else {
-    msg += `⚠️ *Consider ${rec.card.name}*\n`;
-    msg += `💰 Could earn ${rec.reward}\n`;
+    parts.push(`⚠️ *Consider ${recommendation.card.name}*`);
+    parts.push(`💰 Could earn ${recommendation.reward}`);
   }
 
-  return msg;
+  return parts.join('\n');
 }
 
-export function formatBenefits(benefits: CardBenefit[]): string {
+export function formatBenefits(benefits: readonly CardBenefit[]): string {
   if (benefits.length === 0) return '';
 
-  let msg = '\n🎁 *Benefits with this card:*\n';
-  benefits.forEach(b => {
-    const emoji = b.type === 'insurance' ? '🛡️' :
-                  b.type === 'lounge' ? '✈️' :
-                  b.type === 'credit' ? '💵' : '🎁';
-    msg += `  ${emoji} ${b.name}\n`;
-    if (b.conditions) {
-      msg += `     _${b.conditions}_\n`;
+  const benefitLines = benefits.flatMap(benefit => {
+    const emoji = benefit.type === 'insurance' ? '🛡️' :
+                  benefit.type === 'lounge' ? '✈️' :
+                  benefit.type === 'credit' ? '💵' : '🎁';
+    const lines = [`  ${emoji} ${benefit.name}`];
+    if (benefit.conditions != null) {
+      lines.push(`     _${benefit.conditions}_`);
     }
+    return lines;
   });
 
-  return msg;
+  return [
+    '',
+    '🎁 *Benefits with this card:*',
+    ...benefitLines,
+  ].join('\n');
 }
 
 export function formatCardSuggestion(suggestion: CardSuggestion): string {
-  let msg = `\n💡 *${suggestion.reason}*\n\n`;
-  msg += `Recommended: *${suggestion.card.name}*\n`;
-
-  // Key benefits
   const topBenefits = suggestion.card.benefits.slice(0, 2);
-  topBenefits.forEach(b => {
-    msg += `• ${b.name}\n`;
-  });
+  const benefitLines = topBenefits.map(benefit => `• ${benefit.name}`);
 
-  msg += `\n${suggestion.potentialSavings}\n`;
+  const parts = [
+    '',
+    `💡 *${suggestion.reason}*`,
+    '',
+    `Recommended: *${suggestion.card.name}*`,
+    ...benefitLines,
+    '',
+    suggestion.potentialSavings,
+  ];
 
-  if (suggestion.card.referralUrl) {
-    msg += `\n👉 [Apply now](${suggestion.card.referralUrl})`;
-    if (suggestion.card.referralBonus) {
-      msg += ` - ${suggestion.card.referralBonus}`;
-    }
-    msg += '\n_This may include a referral bonus_';
+  if (suggestion.card.referralUrl != null) {
+    const referralText = suggestion.card.referralBonus != null
+      ? `👉 [Apply now](${suggestion.card.referralUrl}) - ${suggestion.card.referralBonus}`
+      : `👉 [Apply now](${suggestion.card.referralUrl})`;
+    parts.push('', referralText, '_This may include a referral bonus_');
   }
 
-  return msg;
+  return parts.join('\n');
 }

@@ -18,64 +18,64 @@ export type RewardType = 'points' | 'cashback' | 'miles';
 export type BenefitType = 'insurance' | 'lounge' | 'credit' | 'warranty' | 'perk';
 
 export interface RewardRule {
-  category: Category | 'foreign' | 'all';
-  multiplier: number;              // 5 = 5x points or 5% cashback
-  rewardType: RewardType;
-  pointValue?: number;             // CAD per point (for calculating actual value)
-  maxSpend?: number;               // Monthly cap for this multiplier
-  conditions?: string;             // e.g., "Canada only"
+  readonly category: Category | 'foreign' | 'all';
+  readonly multiplier: number;              // 5 = 5x points or 5% cashback
+  readonly rewardType: RewardType;
+  readonly pointValue?: number;             // CAD per point (for calculating actual value)
+  readonly maxSpend?: number;               // Monthly cap for this multiplier
+  readonly conditions?: string;             // e.g., "Canada only"
 }
 
 export interface CardBenefit {
-  type: BenefitType;
-  name: string;
-  description: string;
-  triggerCategories?: Category[];  // Which spending triggers this
-  triggerAmount?: number;          // Minimum spend to activate
-  conditions?: string;
-  claimUrl?: string;
+  readonly type: BenefitType;
+  readonly name: string;
+  readonly description: string;
+  readonly triggerCategories?: readonly Category[];  // Which spending triggers this
+  readonly triggerAmount?: number;          // Minimum spend to activate
+  readonly conditions?: string;
+  readonly claimUrl?: string;
 }
 
 export interface CreditCard {
-  id: string;
-  name: string;
-  issuer: string;
-  network: CardNetwork;
-  annualFee: number;               // CAD
-  monthlyFee?: number;             // If billed monthly (e.g., Cobalt $12.99)
-  ftf: number;                     // Foreign transaction fee %
+  readonly id: string;
+  readonly name: string;
+  readonly issuer: string;
+  readonly network: CardNetwork;
+  readonly annualFee: number;               // CAD
+  readonly monthlyFee?: number;             // If billed monthly (e.g., Cobalt $12.99)
+  readonly ftf: number;                     // Foreign transaction fee %
 
-  rewards: RewardRule[];
-  benefits: CardBenefit[];
+  readonly rewards: readonly RewardRule[];
+  readonly benefits: readonly CardBenefit[];
 
   // Affiliate/referral
-  referralUrl?: string;
-  referralBonus?: string;
+  readonly referralUrl?: string;
+  readonly referralBonus?: string;
 
   // For matching transactions
-  merchantPatterns?: string[];     // e.g., ["costco", "wholesale"]
+  readonly merchantPatterns?: readonly string[];     // e.g., ["costco", "wholesale"]
 }
 
 export interface UserCard {
-  id: string;
-  odId: number;
-  cardId: string;                  // References CreditCard.id
-  lastFour?: string;
-  nickname?: string;
-  isActive: boolean;
-  addedAt: string;
+  readonly id: string;
+  readonly odId: number;
+  readonly cardId: string;                  // References CreditCard.id
+  readonly lastFour?: string;
+  readonly nickname?: string;
+  readonly isActive: boolean;
+  readonly addedAt: string;
 }
 
 export interface CardRecommendation {
-  card: CreditCard;
-  userCard?: UserCard;
-  isOptimal: boolean;
-  reward: string;                  // "150 points" or "$3.00 cashback"
-  rewardValue: number;             // CAD value
-  extraReward?: string;            // If not optimal, what they're missing
-  extraRewardValue?: number;
-  relevantBenefits: CardBenefit[];
-  warning?: string;                // e.g., "Costco only accepts Mastercard/Visa"
+  readonly card: CreditCard;
+  readonly userCard?: UserCard;
+  readonly isOptimal: boolean;
+  readonly reward: string;                  // "150 points" or "$3.00 cashback"
+  readonly rewardValue: number;             // CAD value
+  readonly extraReward?: string;            // If not optimal, what they're missing
+  readonly extraRewardValue?: number;
+  readonly relevantBenefits: readonly CardBenefit[];
+  readonly warning?: string;                // e.g., "Costco only accepts Mastercard/Visa"
 }
 
 // ============================================
@@ -350,23 +350,23 @@ export const PRESET_CARDS: CreditCard[] = [
 // ============================================
 
 export function getCardById(cardId: string): CreditCard | undefined {
-  return PRESET_CARDS.find(c => c.id === cardId);
+  return PRESET_CARDS.find(card => card.id === cardId);
 }
 
-export function getCardsByCategory(category: Category): CreditCard[] {
+export function getCardsByCategory(category: Category): readonly CreditCard[] {
   return PRESET_CARDS
-    .filter(card => card.rewards.some(r => r.category === category || r.category === 'all'))
-    .sort((a, b) => {
-      const aMultiplier = a.rewards.find(r => r.category === category)?.multiplier ??
-                          a.rewards.find(r => r.category === 'all')?.multiplier ?? 0;
-      const bMultiplier = b.rewards.find(r => r.category === category)?.multiplier ??
-                          b.rewards.find(r => r.category === 'all')?.multiplier ?? 0;
-      return bMultiplier - aMultiplier;
+    .filter(card => card.rewards.some(rule => rule.category === category || rule.category === 'all'))
+    .sort((cardA, cardB) => {
+      const multiplierA = cardA.rewards.find(rule => rule.category === category)?.multiplier ??
+                          cardA.rewards.find(rule => rule.category === 'all')?.multiplier ?? 0;
+      const multiplierB = cardB.rewards.find(rule => rule.category === category)?.multiplier ??
+                          cardB.rewards.find(rule => rule.category === 'all')?.multiplier ?? 0;
+      return multiplierB - multiplierA;
     });
 }
 
-export function getNoFxFeeCards(): CreditCard[] {
-  return PRESET_CARDS.filter(c => c.ftf === 0);
+export function getNoFxFeeCards(): readonly CreditCard[] {
+  return PRESET_CARDS.filter(card => card.ftf === 0);
 }
 
 export function formatReward(amount: number, rule: RewardRule): string {

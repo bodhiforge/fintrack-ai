@@ -140,26 +140,45 @@ curl https://your-worker.workers.dev/setup-webhook
 
 ```
 packages/
-├── core/                  # Shared business logic
-│   ├── parser.ts          # AI transaction parsing
-│   ├── splitter.ts        # Expense splitting & debt simplification
-│   ├── cards.ts           # Credit card data model & presets
-│   ├── cardRecommender.ts # Recommendation algorithm
-│   └── types.ts           # TypeScript types
-├── telegram-bot/          # Telegram bot worker
-│   ├── src/index.ts       # Main handler
-│   ├── schema.sql         # D1 schema
-│   └── migrations/        # Database migrations
-└── gmail-worker/          # Gmail webhook processor (WIP)
+├── core/                     # Shared business logic
+│   ├── parser.ts             # AI transaction parsing
+│   ├── splitter.ts           # Expense splitting & debt simplification
+│   ├── cards.ts              # Credit card data model & presets
+│   ├── cardRecommender.ts    # Recommendation algorithm
+│   ├── constants.ts          # Shared constants
+│   └── types.ts              # TypeScript types
+├── telegram-bot/             # Telegram bot worker
+│   └── src/
+│       ├── index.ts          # Entry point (HTTP routing)
+│       ├── types.ts          # Telegram-specific types
+│       ├── constants.ts      # Bot constants
+│       ├── handlers/         # Request handlers
+│       │   ├── commands/     # /menu, /balance, /cards, etc.
+│       │   └── callbacks/    # Inline button handlers
+│       ├── db/               # Database helpers
+│       ├── telegram/         # Telegram API helpers
+│       └── utils/            # Utilities (invite codes, location)
+└── gmail-worker/             # Gmail webhook processor (WIP)
 ```
 
 ## Roadmap
 
 - [x] **Phase 1: MVP** - AI parsing, splitting, multi-project
 - [x] **Phase 2: Card Strategy** - Recommend best card, show benefits
+- [x] **Phase 2.5: Code Quality** - Modular architecture, immutability
 - [ ] **Phase 3: Card Referrals** - Suggest new cards with affiliate links
 - [ ] **Phase 4: Gmail Integration** - Auto-parse bank emails
 - [ ] **Phase 5: Benefit Reminders** - Monthly perk notifications
+
+## Recent Commits
+
+| Commit | Description |
+|--------|-------------|
+| `1301612` | refactor: full codebase cleanup per Hawking standards |
+| `a8720aa` | feat: add Telegram location sharing support |
+| `81b4d16` | feat: add location-based foreign currency detection |
+| `c42c1ea` | fix: P0/P1 issues - Costco detection, remove old strategy |
+| `a008f45` | feat: add credit card recommendation system |
 
 ## License
 
