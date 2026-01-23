@@ -123,10 +123,29 @@ export default {
 };
 
 // ============================================
+// Access Control
+// ============================================
+
+const ALLOWED_USERS = [
+  7511659357,  // Bodhi
+  5347556412,  // Partner
+];
+
+// ============================================
 // Update Handler
 // ============================================
 
 async function handleUpdate(update: TelegramUpdate, env: Env): Promise<void> {
+  // Check whitelist
+  const userId = update.message?.from?.id || update.callback_query?.from?.id;
+  if (userId && !ALLOWED_USERS.includes(userId)) {
+    const chatId = update.message?.chat.id || update.callback_query?.message?.chat.id;
+    if (chatId) {
+      await sendMessage(chatId, '🔒 Sorry, this is a private bot.', env.TELEGRAM_BOT_TOKEN);
+    }
+    return;
+  }
+
   if (update.callback_query) {
     await handleCallbackQuery(update.callback_query, env);
     return;
@@ -246,8 +265,9 @@ async function handleCommand(
     case '/start':
       await sendMessage(
         chatId,
-        `👋 Welcome to FinTrack AI!\n\nJust send me your expenses in natural language:\n\n• "dinner 50 at Sushi Place"\n• "Costco 150"\n• "uber 25 USD"\n\nI'll parse, categorize, and check your card strategy automatically.`,
-        env.TELEGRAM_BOT_TOKEN
+        `👋 Welcome to FinTrack AI!\n\nYour Chat ID: \`${chatId}\`\n\nJust send me your expenses in natural language:\n\n• "dinner 50 at Sushi Place"\n• "Costco 150"\n• "uber 25 USD"\n\nI'll parse, categorize, and check your card strategy automatically.`,
+        env.TELEGRAM_BOT_TOKEN,
+        { parse_mode: 'Markdown' }
       );
       break;
 
