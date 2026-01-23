@@ -18,6 +18,7 @@ Return ONLY valid JSON with these fields:
 - category: string (one of: dining, grocery, gas, shopping, subscription, travel, transport, entertainment, health, utilities, other)
 - cardLastFour: string (last 4 digits if mentioned, otherwise "unknown")
 - date: string (YYYY-MM-DD format, use today's date if not specified)
+- location: string or null (city or country if mentioned, e.g., "San José", "Tokyo", "Costa Rica", otherwise null)
 
 Category classification rules:
 - dining: restaurants, cafes, food delivery (Uber Eats, DoorDash, Skip)
@@ -139,6 +140,7 @@ export class TransactionParser {
       category: this.normalizeCategory(parsed.category),
       cardLastFour: parsed.cardLastFour ?? 'unknown',
       date: parsed.date ?? today,
+      location: parsed.location ?? undefined,
     };
   }
 

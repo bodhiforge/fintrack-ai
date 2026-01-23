@@ -181,7 +181,8 @@ function rowToProject(row: Record<string, unknown>): Project {
     type: row.type as 'ongoing' | 'trip' | 'event',
     defaultCurrency: row.default_currency as Currency,
     defaultLocation: row.default_location as string | undefined,
-    inviteCode: row.invite_code as string,
+    inviteCode: row.invite_code as string | undefined,
+    inviteExpiresAt: row.invite_expires_at as string | undefined,
     ownerId: row.owner_id as number,
     isActive: row.is_active === 1,
     startDate: row.start_date as string | undefined,
@@ -336,6 +337,8 @@ async function handleTextMessage(
     });
 
     // Save pending transaction to D1 with project_id
+    // Use parsed location if available, otherwise fall back to project default
+    const location = parsed.location ?? project?.defaultLocation ?? null;
     const txId = crypto.randomUUID();
     await env.DB.prepare(`
       INSERT INTO transactions (id, project_id, user_id, chat_id, merchant, amount, currency, category, location, card_last_four, payer, is_shared, splits, status, created_at)
@@ -349,7 +352,7 @@ async function handleTextMessage(
       parsed.amount,
       parsed.currency,
       parsed.category,
-      project?.defaultLocation ?? null,
+      location,
       parsed.cardLastFour || null,
       userName,
       1,
@@ -362,8 +365,11 @@ async function handleTextMessage(
     if (project && project.id !== 'default') {
       response += `📁 _${project.name}_\n`;
     }
-    response += `\n📍 ${parsed.merchant}\n`;
-    response += `💰 $${parsed.amount.toFixed(2)} ${parsed.currency}\n`;
+    response += `\n📍 ${parsed.merchant}`;
+    if (location) {
+      response += ` (${location})`;
+    }
+    response += `\n💰 $${parsed.amount.toFixed(2)} ${parsed.currency}\n`;
     response += `🏷️ ${parsed.category}\n`;
     response += `📅 ${parsed.date}\n\n`;
 
@@ -429,21 +435,21 @@ async function handleCommand(
     case '/m':
       await sendMessage(
         chatId,
-        `📁 *${project?.name ?? 'Daily'}*\n\n直接发消息记账，或点击下方按钮：`,
+        `📁 *${project?.name ?? 'Daily'}*\n\nSend a message to track expenses, or tap a button:`,
         env.TELEGRAM_BOT_TOKEN,
         {
           parse_mode: 'Markdown',
           reply_markup: {
             inline_keyboard: [
               [
-                { text: '📊 余额', callback_data: 'menu_balance' },
-                { text: '💸 结算', callback_data: 'menu_settle' },
-                { text: '📜 历史', callback_data: 'menu_history' },
+                { text: '📊 Balance', callback_data: 'menu_balance' },
+                { text: '💸 Settle', callback_data: 'menu_settle' },
+                { text: '📜 History', callback_data: 'menu_history' },
               ],
               [
-                { text: '📁 项目', callback_data: 'menu_projects' },
-                { text: '💳 卡片', callback_data: 'menu_cards' },
-                { text: '❓ 帮助', callback_data: 'menu_help' },
+                { text: '📁 Projects', callback_data: 'menu_projects' },
+                { text: '💳 Cards', callback_data: 'menu_cards' },
+                { text: '❓ Help', callback_data: 'menu_help' },
               ],
             ],
           },
@@ -455,7 +461,7 @@ async function handleCommand(
     case '/h':
       await sendMessage(
         chatId,
-        `*快捷命令:*\n/m - 主菜单\n/b - 余额\n/s - 结算\n/h - 历史\n/p - 项目\n\n*项目管理:*\n/new <名称> - 新建项目\n/join <邀请码> - 加入项目\n\n*记账:*\n直接发消息！\n"午饭 50 麦当劳"\n"Costco 150"`,
+        `*Quick Commands:*\n/m - Menu\n/b - Balance\n/s - Settle\n/hi - History\n/p - Projects\n\n*Project Management:*\n/new <name> - Create project\n/join <code> - Join project\n\n*Track Expenses:*\nJust send a message!\n"lunch 50 McDonald's"\n"Costco 150"`,
         env.TELEGRAM_BOT_TOKEN,
         { parse_mode: 'Markdown' }
       );
@@ -470,12 +476,11 @@ async function handleCommand(
       }
 
       const projectId = crypto.randomUUID();
-      const inviteCode = generateInviteCode();
 
       await env.DB.prepare(`
-        INSERT INTO projects (id, name, type, default_currency, invite_code, owner_id, created_at)
-        VALUES (?, ?, 'trip', 'CAD', ?, ?, ?)
-      `).bind(projectId, projectName, inviteCode, user.id, new Date().toISOString()).run();
+        INSERT INTO projects (id, name, type, default_currency, owner_id, created_at)
+        VALUES (?, ?, 'trip', 'CAD', ?, ?)
+      `).bind(projectId, projectName, user.id, new Date().toISOString()).run();
 
       // Add owner as member
       await env.DB.prepare(`
@@ -490,7 +495,7 @@ async function handleCommand(
 
       await sendMessage(
         chatId,
-        `✅ Created project *${projectName}*\n\n📎 Invite code: \`${inviteCode}\`\n\nShare this code with your group!`,
+        `✅ Created project *${projectName}*\n\nUse /invite to generate a share code when ready.`,
         env.TELEGRAM_BOT_TOKEN,
         { parse_mode: 'Markdown' }
       );
@@ -509,8 +514,17 @@ async function handleCommand(
       ).bind(inviteCode).first();
 
       if (!projectToJoin) {
-        await sendMessage(chatId, '❌ Invalid invite code.', env.TELEGRAM_BOT_TOKEN);
+        await sendMessage(chatId, '❌ Invalid or expired invite code.', env.TELEGRAM_BOT_TOKEN);
         break;
+      }
+
+      // Check expiration
+      if (projectToJoin.invite_expires_at) {
+        const expiresAt = new Date(projectToJoin.invite_expires_at as string);
+        if (expiresAt < new Date()) {
+          await sendMessage(chatId, '❌ This invite code has expired. Ask the owner for a new one.', env.TELEGRAM_BOT_TOKEN);
+          break;
+        }
       }
 
       // Check if already member
@@ -591,12 +605,9 @@ async function handleCommand(
         const current = p.id === project?.id ? ' ← current' : '';
         const archived = p.is_active === 0 ? ' 📦' : '';
         msg += `*${p.name}*${current}${archived}\n`;
-        msg += `  👥 ${p.member_count} members | 📝 ${p.tx_count} transactions\n`;
-        if (p.is_active === 1) {
-          msg += `  📎 \`${p.invite_code}\`\n`;
-        }
-        msg += '\n';
+        msg += `  👥 ${p.member_count} members | 📝 ${p.tx_count} transactions\n\n`;
       }
+      msg += `_Use /invite to generate a share link_`;
 
       await sendMessage(chatId, msg, env.TELEGRAM_BOT_TOKEN, { parse_mode: 'Markdown' });
       break;
@@ -608,9 +619,28 @@ async function handleCommand(
         break;
       }
 
+      if (project.id === 'default') {
+        await sendMessage(chatId, '❌ Cannot invite to the default project.', env.TELEGRAM_BOT_TOKEN);
+        break;
+      }
+
+      if (project.ownerId !== user.id) {
+        await sendMessage(chatId, '❌ Only the project owner can generate invite codes.', env.TELEGRAM_BOT_TOKEN);
+        break;
+      }
+
+      // Generate new invite code with 7-day expiration
+      const newCode = generateInviteCode();
+      const expiresAt = new Date(Date.now() + 7 * 24 * 60 * 60 * 1000).toISOString();
+
+      await env.DB.prepare(
+        'UPDATE projects SET invite_code = ?, invite_expires_at = ? WHERE id = ?'
+      ).bind(newCode, expiresAt, project.id).run();
+
+      const expiryDate = new Date(expiresAt).toLocaleDateString('en-CA');
       await sendMessage(
         chatId,
-        `📎 *${project.name}* invite code:\n\n\`${project.inviteCode}\`\n\nShare this with your group!`,
+        `📎 *${project.name}* invite code:\n\n\`${newCode}\`\n\n_Expires: ${expiryDate}_`,
         env.TELEGRAM_BOT_TOKEN,
         { parse_mode: 'Markdown' }
       );
@@ -673,7 +703,100 @@ async function handleCommand(
 
       await sendMessage(
         chatId,
-        `📦 Archived *${project.name}*.\n\nHistorical data preserved. Use /projects to see archived.`,
+        `📦 Archived *${project.name}*.\n\nData preserved. Use /unarchive to restore.`,
+        env.TELEGRAM_BOT_TOKEN,
+        { parse_mode: 'Markdown' }
+      );
+      break;
+    }
+
+    case '/unarchive': {
+      // Find archived project by name
+      const projectName = args.join(' ').replace(/"/g, '').trim();
+
+      let targetProject;
+      if (projectName) {
+        // Search by name
+        targetProject = await env.DB.prepare(`
+          SELECT * FROM projects WHERE name = ? AND owner_id = ? AND is_active = 0
+        `).bind(projectName, user.id).first();
+      } else {
+        // Show list of archived projects
+        const archivedProjects = await env.DB.prepare(`
+          SELECT name FROM projects WHERE owner_id = ? AND is_active = 0
+        `).bind(user.id).all();
+
+        if (!archivedProjects.results || archivedProjects.results.length === 0) {
+          await sendMessage(chatId, '📦 No archived projects.', env.TELEGRAM_BOT_TOKEN);
+          break;
+        }
+
+        const names = archivedProjects.results.map(p => `• ${p.name}`).join('\n');
+        await sendMessage(chatId, `📦 *Archived Projects:*\n\n${names}\n\nUse: /unarchive "Project Name"`, env.TELEGRAM_BOT_TOKEN, { parse_mode: 'Markdown' });
+        break;
+      }
+
+      if (!targetProject) {
+        await sendMessage(chatId, '❌ Archived project not found.', env.TELEGRAM_BOT_TOKEN);
+        break;
+      }
+
+      await env.DB.prepare(
+        'UPDATE projects SET is_active = 1 WHERE id = ?'
+      ).bind(targetProject.id).run();
+
+      await env.DB.prepare(
+        'UPDATE users SET current_project_id = ? WHERE id = ?'
+      ).bind(targetProject.id, user.id).run();
+
+      await sendMessage(
+        chatId,
+        `✅ Restored *${targetProject.name}*`,
+        env.TELEGRAM_BOT_TOKEN,
+        { parse_mode: 'Markdown' }
+      );
+      break;
+    }
+
+    case '/deleteproject':
+    case '/delproj': {
+      if (!project || project.id === 'default') {
+        await sendMessage(chatId, '❌ Cannot delete the default project.', env.TELEGRAM_BOT_TOKEN);
+        break;
+      }
+
+      if (project.ownerId !== user.id) {
+        await sendMessage(chatId, '❌ Only the project owner can delete.', env.TELEGRAM_BOT_TOKEN);
+        break;
+      }
+
+      // Check for confirmation flag
+      const confirm = args[0]?.toLowerCase() === 'confirm';
+      if (!confirm) {
+        await sendMessage(
+          chatId,
+          `⚠️ *Delete ${project.name}?*\n\nThis will permanently delete:\n• All transactions\n• All member data\n\nType: /deleteproject confirm`,
+          env.TELEGRAM_BOT_TOKEN,
+          { parse_mode: 'Markdown' }
+        );
+        break;
+      }
+
+      // Delete all related data
+      await env.DB.prepare('DELETE FROM transactions WHERE project_id = ?').bind(project.id).run();
+      await env.DB.prepare('DELETE FROM project_members WHERE project_id = ?').bind(project.id).run();
+
+      // Switch all members to default first
+      await env.DB.prepare(`
+        UPDATE users SET current_project_id = 'default' WHERE current_project_id = ?
+      `).bind(project.id).run();
+
+      // Delete project
+      await env.DB.prepare('DELETE FROM projects WHERE id = ?').bind(project.id).run();
+
+      await sendMessage(
+        chatId,
+        `🗑️ Deleted *${project.name}*`,
         env.TELEGRAM_BOT_TOKEN,
         { parse_mode: 'Markdown' }
       );
@@ -711,6 +834,69 @@ async function handleCommand(
       break;
     }
 
+    case '/setlocation': {
+      const newLocation = args.join(' ').replace(/"/g, '').trim();
+      if (!newLocation) {
+        await sendMessage(chatId, '❌ Usage: /setlocation "City" or /setlocation clear', env.TELEGRAM_BOT_TOKEN);
+        break;
+      }
+
+      if (!project) {
+        await sendMessage(chatId, '❌ No current project.', env.TELEGRAM_BOT_TOKEN);
+        break;
+      }
+
+      if (project.ownerId !== user.id) {
+        await sendMessage(chatId, '❌ Only the project owner can change settings.', env.TELEGRAM_BOT_TOKEN);
+        break;
+      }
+
+      const locationValue = newLocation.toLowerCase() === 'clear' ? null : newLocation;
+      await env.DB.prepare(
+        'UPDATE projects SET default_location = ? WHERE id = ?'
+      ).bind(locationValue, project.id).run();
+
+      await sendMessage(
+        chatId,
+        locationValue
+          ? `📍 Default location set to *${locationValue}*`
+          : `📍 Default location cleared`,
+        env.TELEGRAM_BOT_TOKEN,
+        { parse_mode: 'Markdown' }
+      );
+      break;
+    }
+
+    case '/setcurrency': {
+      const newCurrency = args[0]?.toUpperCase().trim();
+      if (!newCurrency) {
+        await sendMessage(chatId, '❌ Usage: /setcurrency CAD|USD|EUR|...', env.TELEGRAM_BOT_TOKEN);
+        break;
+      }
+
+      if (!project) {
+        await sendMessage(chatId, '❌ No current project.', env.TELEGRAM_BOT_TOKEN);
+        break;
+      }
+
+      if (project.ownerId !== user.id) {
+        await sendMessage(chatId, '❌ Only the project owner can change settings.', env.TELEGRAM_BOT_TOKEN);
+        break;
+      }
+
+      await env.DB.prepare(
+        'UPDATE projects SET default_currency = ? WHERE id = ?'
+      ).bind(newCurrency, project.id).run();
+
+      await sendMessage(
+        chatId,
+        `💱 Default currency set to *${newCurrency}*`,
+        env.TELEGRAM_BOT_TOKEN,
+        { parse_mode: 'Markdown' }
+      );
+      break;
+    }
+
     case '/balance':
     case '/b': {
       const projectId = project?.id ?? 'default';
@@ -728,19 +914,35 @@ async function handleCommand(
       }
 
       const transactions = balanceRows.results.map((row) => rowToTransaction(row as Record<string, unknown>));
-      const balances = calculateBalances(transactions);
 
-      if (balances.length === 0) {
+      // Group transactions by currency
+      const byCurrency: Record<string, Transaction[]> = {};
+      for (const tx of transactions) {
+        const curr = tx.currency;
+        if (!byCurrency[curr]) byCurrency[curr] = [];
+        byCurrency[curr].push(tx);
+      }
+
+      let balanceMsg = `📊 *${project?.name ?? 'Daily'} Balances*\n`;
+      let hasAnyBalance = false;
+
+      for (const [currency, txns] of Object.entries(byCurrency)) {
+        const balances = calculateBalances(txns);
+        if (balances.length === 0) continue;
+
+        hasAnyBalance = true;
+        balanceMsg += `\n*${currency}:*\n`;
+        balances.forEach((b) => {
+          const emoji = b.netBalance > 0 ? '💚' : '🔴';
+          const status = b.netBalance > 0 ? 'is owed' : 'owes';
+          balanceMsg += `${emoji} ${b.person} ${status} $${Math.abs(b.netBalance).toFixed(2)}\n`;
+        });
+      }
+
+      if (!hasAnyBalance) {
         await sendMessage(chatId, '📊 All balanced! No one owes anything.', env.TELEGRAM_BOT_TOKEN);
         break;
       }
-
-      let balanceMsg = `📊 *${project?.name ?? 'Daily'} Balances*\n\n`;
-      balances.forEach((b) => {
-        const emoji = b.netBalance > 0 ? '💚' : '🔴';
-        const status = b.netBalance > 0 ? 'is owed' : 'owes';
-        balanceMsg += `${emoji} ${b.person} ${status} $${Math.abs(b.netBalance).toFixed(2)}\n`;
-      });
 
       await sendMessage(chatId, balanceMsg, env.TELEGRAM_BOT_TOKEN, { parse_mode: 'Markdown' });
       break;
@@ -762,16 +964,32 @@ async function handleCommand(
         break;
       }
 
-      const txns = settleRows.results.map((row) => rowToTransaction(row as Record<string, unknown>));
-      const settlements = simplifyDebts(txns, project?.defaultCurrency ?? 'CAD');
+      const allTxns = settleRows.results.map((row) => rowToTransaction(row as Record<string, unknown>));
 
-      if (settlements.length === 0) {
+      // Group by currency
+      const byCurrency: Record<string, Transaction[]> = {};
+      for (const tx of allTxns) {
+        const curr = tx.currency;
+        if (!byCurrency[curr]) byCurrency[curr] = [];
+        byCurrency[curr].push(tx);
+      }
+
+      let settleMsg = `💸 *${project?.name ?? 'Daily'} Settlement*\n`;
+      let hasAnySettlement = false;
+
+      for (const [currency, txns] of Object.entries(byCurrency)) {
+        const settlements = simplifyDebts(txns, currency);
+        if (settlements.length === 0) continue;
+
+        hasAnySettlement = true;
+        settleMsg += `\n*${currency}:*\n`;
+        settleMsg += formatSettlements(settlements);
+      }
+
+      if (!hasAnySettlement) {
         await sendMessage(chatId, '💸 All settled! No payments needed.', env.TELEGRAM_BOT_TOKEN);
         break;
       }
-
-      let settleMsg = `💸 *${project?.name ?? 'Daily'} Settlement*\n\n`;
-      settleMsg += formatSettlements(settlements);
 
       await sendMessage(chatId, settleMsg, env.TELEGRAM_BOT_TOKEN, { parse_mode: 'Markdown' });
       break;
@@ -812,6 +1030,73 @@ async function handleCommand(
       );
       break;
 
+    // Transaction edit commands
+    case '/editamount': {
+      const [txId, ...amountParts] = args;
+      const newAmount = parseFloat(amountParts.join(''));
+      if (!txId || isNaN(newAmount)) {
+        await sendMessage(chatId, '❌ Usage: /editamount <txId> <amount>', env.TELEGRAM_BOT_TOKEN);
+        break;
+      }
+      await env.DB.prepare('UPDATE transactions SET amount = ? WHERE id = ?').bind(newAmount, txId).run();
+      await sendMessage(chatId, `✅ Amount updated to $${newAmount.toFixed(2)}`, env.TELEGRAM_BOT_TOKEN);
+      break;
+    }
+
+    case '/editmerchant': {
+      const [txId, ...merchantParts] = args;
+      const newMerchant = merchantParts.join(' ').replace(/"/g, '').trim();
+      if (!txId || !newMerchant) {
+        await sendMessage(chatId, '❌ Usage: /editmerchant <txId> <name>', env.TELEGRAM_BOT_TOKEN);
+        break;
+      }
+      await env.DB.prepare('UPDATE transactions SET merchant = ? WHERE id = ?').bind(newMerchant, txId).run();
+      await sendMessage(chatId, `✅ Merchant updated to *${newMerchant}*`, env.TELEGRAM_BOT_TOKEN, { parse_mode: 'Markdown' });
+      break;
+    }
+
+    case '/editsplit': {
+      const [txId, ...splitParts] = args;
+      const splitText = splitParts.join(' ').trim();
+      if (!txId || !splitText) {
+        await sendMessage(chatId, '❌ Usage: /editsplit <txId> <splits>\nExample: /editsplit abc123 Bodhi 30, Sherry 20', env.TELEGRAM_BOT_TOKEN);
+        break;
+      }
+
+      // Parse split text: "Bodhi 30, Sherry 20" or "equal"
+      const tx = await env.DB.prepare('SELECT * FROM transactions WHERE id = ?').bind(txId).first();
+      if (!tx) {
+        await sendMessage(chatId, '❌ Transaction not found.', env.TELEGRAM_BOT_TOKEN);
+        break;
+      }
+
+      let newSplits: Record<string, number> = {};
+      if (splitText.toLowerCase() === 'equal') {
+        const members = project ? await getProjectMembers(env, project.id) : [user.firstName ?? 'User', 'Sherry'];
+        const share = (tx.amount as number) / members.length;
+        members.forEach(m => { newSplits[m] = Math.round(share * 100) / 100; });
+      } else {
+        // Parse "Name Amount, Name Amount"
+        const parts = splitText.split(',').map(p => p.trim());
+        for (const part of parts) {
+          const match = part.match(/^(.+?)\s+([\d.]+)$/);
+          if (match) {
+            newSplits[match[1].trim()] = parseFloat(match[2]);
+          }
+        }
+      }
+
+      if (Object.keys(newSplits).length === 0) {
+        await sendMessage(chatId, '❌ Could not parse splits. Use format: "Bodhi 30, Sherry 20"', env.TELEGRAM_BOT_TOKEN);
+        break;
+      }
+
+      await env.DB.prepare('UPDATE transactions SET splits = ? WHERE id = ?').bind(JSON.stringify(newSplits), txId).run();
+      const splitDisplay = Object.entries(newSplits).map(([n, a]) => `${n}: $${a.toFixed(2)}`).join(', ');
+      await sendMessage(chatId, `✅ Split updated: ${splitDisplay}`, env.TELEGRAM_BOT_TOKEN);
+      break;
+    }
+
     default:
       await sendMessage(
         chatId,
@@ -830,7 +1115,7 @@ async function handleCallbackQuery(
   env: Env
 ): Promise<void> {
   const data = query.data ?? '';
-  const [action, txId] = data.split('_');
+  const [action, id] = data.split('_'); // id can be txId, projectId, or subAction
 
   // Acknowledge the callback
   await answerCallbackQuery(query.id, env.TELEGRAM_BOT_TOKEN);
@@ -840,7 +1125,7 @@ async function handleCallbackQuery(
       // Update transaction status to confirmed
       await env.DB.prepare(`
         UPDATE transactions SET status = 'confirmed', confirmed_at = ? WHERE id = ?
-      `).bind(new Date().toISOString(), txId).run();
+      `).bind(new Date().toISOString(), id).run();
 
       await editMessageText(
         query.message?.chat.id ?? 0,
@@ -855,7 +1140,7 @@ async function handleCallbackQuery(
       // Update to personal (not shared)
       await env.DB.prepare(`
         UPDATE transactions SET status = 'personal', is_shared = 0, splits = NULL, confirmed_at = ? WHERE id = ?
-      `).bind(new Date().toISOString(), txId).run();
+      `).bind(new Date().toISOString(), id).run();
 
       await editMessageText(
         query.message?.chat.id ?? 0,
@@ -870,7 +1155,7 @@ async function handleCallbackQuery(
       // Mark as deleted in database
       await env.DB.prepare(`
         UPDATE transactions SET status = 'deleted' WHERE id = ?
-      `).bind(txId).run();
+      `).bind(id).run();
 
       await deleteMessage(
         query.message?.chat.id ?? 0,
@@ -879,19 +1164,38 @@ async function handleCallbackQuery(
       );
       break;
 
-    case 'edit':
+    case 'edit': {
+      // Show edit options for transaction
+      const txId = id;
       await sendMessage(
         query.message?.chat.id ?? 0,
-        'Reply to this message with your correction.',
-        env.TELEGRAM_BOT_TOKEN
+        '✏️ *What do you want to edit?*',
+        env.TELEGRAM_BOT_TOKEN,
+        {
+          parse_mode: 'Markdown',
+          reply_markup: {
+            inline_keyboard: [
+              [
+                { text: '💰 Amount', callback_data: `txedit_amount_${txId}` },
+                { text: '📍 Merchant', callback_data: `txedit_merchant_${txId}` },
+              ],
+              [
+                { text: '🏷️ Category', callback_data: `txedit_category_${txId}` },
+                { text: '👥 Split', callback_data: `txedit_split_${txId}` },
+              ],
+              [{ text: '❌ Cancel', callback_data: `txedit_cancel_${txId}` }],
+            ],
+          },
+        }
       );
       break;
+    }
 
     // Menu callbacks - redirect to command handlers
     case 'menu': {
       const chatId = query.message?.chat.id ?? 0;
       const telegramUser = query.from;
-      const subAction = txId; // txId is actually the sub-action here
+      const subAction = id;
 
       // Simulate command execution
       switch (subAction) {
@@ -912,21 +1216,25 @@ async function handleCallbackQuery(
           break;
         case 'projects':
           // Show project sub-menu
-          await sendMessage(chatId, '📁 *项目管理*', env.TELEGRAM_BOT_TOKEN, {
+          await sendMessage(chatId, '📁 *Project Management*', env.TELEGRAM_BOT_TOKEN, {
             parse_mode: 'Markdown',
             reply_markup: {
               inline_keyboard: [
                 [
-                  { text: '📋 我的项目', callback_data: 'proj_list' },
-                  { text: '🔄 切换', callback_data: 'proj_switch' },
+                  { text: '📋 My Projects', callback_data: 'proj_list' },
+                  { text: '🔄 Switch', callback_data: 'proj_switch' },
                 ],
                 [
-                  { text: '➕ 新建', callback_data: 'proj_new' },
-                  { text: '🔗 加入', callback_data: 'proj_join' },
+                  { text: '➕ New', callback_data: 'proj_new' },
+                  { text: '🔗 Join', callback_data: 'proj_join' },
                 ],
                 [
-                  { text: '📎 邀请码', callback_data: 'proj_invite' },
-                  { text: '⬅️ 返回', callback_data: 'proj_back' },
+                  { text: '📎 Invite', callback_data: 'proj_invite' },
+                  { text: '⚙️ Settings', callback_data: 'proj_settings' },
+                ],
+                [
+                  { text: '📦 Archive', callback_data: 'proj_archive' },
+                  { text: '⬅️ Back', callback_data: 'proj_back' },
                 ],
               ],
             },
@@ -939,7 +1247,7 @@ async function handleCallbackQuery(
     case 'proj': {
       const chatId = query.message?.chat.id ?? 0;
       const telegramUser = query.from;
-      const subAction = txId;
+      const subAction = id;
 
       switch (subAction) {
         case 'list':
@@ -952,10 +1260,42 @@ async function handleCallbackQuery(
           await handleCommand('/invite', chatId, telegramUser, env);
           break;
         case 'new':
-          await sendMessage(chatId, '发送命令创建项目：\n`/new 项目名称`', env.TELEGRAM_BOT_TOKEN, { parse_mode: 'Markdown' });
+          await sendMessage(chatId, 'Create a project:\n`/new Project Name`', env.TELEGRAM_BOT_TOKEN, { parse_mode: 'Markdown' });
           break;
         case 'join':
-          await sendMessage(chatId, '发送命令加入项目：\n`/join 邀请码`', env.TELEGRAM_BOT_TOKEN, { parse_mode: 'Markdown' });
+          await sendMessage(chatId, 'Join a project:\n`/join INVITE_CODE`', env.TELEGRAM_BOT_TOKEN, { parse_mode: 'Markdown' });
+          break;
+        case 'settings': {
+          const user = await getOrCreateUser(env, telegramUser);
+          const project = await getCurrentProject(env, user.id);
+          if (!project) {
+            await sendMessage(chatId, '❌ No project selected.', env.TELEGRAM_BOT_TOKEN);
+            break;
+          }
+          const isDefault = project.id === 'default';
+          const keyboard = [
+            [
+              { text: '📍 Set Location', callback_data: 'set_location' },
+              { text: '💱 Set Currency', callback_data: 'set_currency' },
+            ],
+          ];
+          // Only show rename/delete for non-default projects
+          if (!isDefault) {
+            keyboard.push([
+              { text: '✏️ Rename', callback_data: 'set_rename' },
+              { text: '🗑️ Delete', callback_data: 'set_delete' },
+            ]);
+          }
+          keyboard.push([{ text: '⬅️ Back', callback_data: 'menu_projects' }]);
+
+          await sendMessage(chatId, `⚙️ *${project.name} Settings*\n\n📍 Location: ${project.defaultLocation ?? 'Not set'}\n💱 Currency: ${project.defaultCurrency}`, env.TELEGRAM_BOT_TOKEN, {
+            parse_mode: 'Markdown',
+            reply_markup: { inline_keyboard: keyboard },
+          });
+          break;
+        }
+        case 'archive':
+          await handleCommand('/archive', chatId, telegramUser, env);
           break;
         case 'back':
           await handleCommand('/m', chatId, telegramUser, env);
@@ -966,7 +1306,7 @@ async function handleCallbackQuery(
 
     case 'switch': {
       // Switch to selected project
-      const projectId = txId; // txId is actually the project ID here
+      const projectId = id;
       const userId = query.from.id;
 
       await env.DB.prepare(
@@ -984,6 +1324,88 @@ async function handleCallbackQuery(
         env.TELEGRAM_BOT_TOKEN,
         { parse_mode: 'Markdown' }
       );
+      break;
+    }
+
+    case 'txedit': {
+      // Transaction edit - id format: field_txId
+      const chatId = query.message?.chat.id ?? 0;
+      const [field, txId] = id.split('_');
+
+      if (field === 'cancel') {
+        await deleteMessage(chatId, query.message?.message_id ?? 0, env.TELEGRAM_BOT_TOKEN);
+        break;
+      }
+
+      if (field === 'category') {
+        // Show category picker
+        const categories = ['dining', 'grocery', 'gas', 'shopping', 'travel', 'transport', 'entertainment', 'health', 'utilities', 'other'];
+        const keyboard = [];
+        for (let i = 0; i < categories.length; i += 3) {
+          keyboard.push(categories.slice(i, i + 3).map(c => ({
+            text: c,
+            callback_data: `txset_category_${c}_${txId}`,
+          })));
+        }
+        await sendMessage(chatId, '🏷️ Select category:', env.TELEGRAM_BOT_TOKEN, {
+          reply_markup: { inline_keyboard: keyboard },
+        });
+      } else {
+        // For amount, merchant, split - ask for text input
+        const prompts: Record<string, string> = {
+          amount: '💰 Reply with the new amount (e.g., 50.00):',
+          merchant: '📍 Reply with the new merchant name:',
+          split: '👥 Reply with split (e.g., "Bodhi 30, Sherry 20" or "equal"):',
+        };
+        await sendMessage(chatId, `${prompts[field]}\n\n_Transaction ID: ${txId}_`, env.TELEGRAM_BOT_TOKEN, { parse_mode: 'Markdown' });
+      }
+      break;
+    }
+
+    case 'txset': {
+      // Transaction set value - id format: field_value_txId
+      const chatId = query.message?.chat.id ?? 0;
+      const parts = id.split('_');
+      const field = parts[0];
+      const txId = parts[parts.length - 1];
+      const value = parts.slice(1, -1).join('_');
+
+      if (field === 'category') {
+        await env.DB.prepare(
+          'UPDATE transactions SET category = ? WHERE id = ?'
+        ).bind(value, txId).run();
+
+        await editMessageText(
+          chatId,
+          query.message?.message_id ?? 0,
+          `✅ Category updated to *${value}*`,
+          env.TELEGRAM_BOT_TOKEN,
+          { parse_mode: 'Markdown' }
+        );
+      }
+      break;
+    }
+
+    case 'set': {
+      // Project settings callbacks
+      const chatId = query.message?.chat.id ?? 0;
+      const telegramUser = query.from;
+      const settingAction = id;
+
+      switch (settingAction) {
+        case 'location':
+          await sendMessage(chatId, '📍 Set location:\n`/setlocation "City Name"`\nor `/setlocation clear`', env.TELEGRAM_BOT_TOKEN, { parse_mode: 'Markdown' });
+          break;
+        case 'currency':
+          await sendMessage(chatId, '💱 Set currency:\n`/setcurrency USD`', env.TELEGRAM_BOT_TOKEN, { parse_mode: 'Markdown' });
+          break;
+        case 'rename':
+          await sendMessage(chatId, '✏️ Rename project:\n`/rename "New Name"`', env.TELEGRAM_BOT_TOKEN, { parse_mode: 'Markdown' });
+          break;
+        case 'delete':
+          await handleCommand('/deleteproject', chatId, telegramUser, env);
+          break;
+      }
       break;
     }
   }

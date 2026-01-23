@@ -53,7 +53,8 @@ export interface Project {
   type: 'ongoing' | 'trip' | 'event';
   defaultCurrency: Currency;
   defaultLocation?: string;
-  inviteCode: string;
+  inviteCode?: string;
+  inviteExpiresAt?: string;
   ownerId: number;
   isActive: boolean;
   startDate?: string;
