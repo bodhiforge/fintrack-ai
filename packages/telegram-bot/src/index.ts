@@ -140,6 +140,27 @@ const ALLOWED_USERS = [
 ];
 
 // ============================================
+// Database Helpers
+// ============================================
+
+function rowToTransaction(row: Record<string, unknown>): Transaction {
+  return {
+    id: row.id as string,
+    date: row.created_at as string,
+    merchant: row.merchant as string,
+    amount: row.amount as number,
+    currency: row.currency as Currency,
+    category: row.category as Category,
+    cardLastFour: (row.card_last_four as string) || '',
+    payer: row.payer as string,
+    isShared: row.is_shared === 1,
+    splits: row.splits ? JSON.parse(row.splits as string) : {},
+    createdAt: row.created_at as string,
+    confirmedAt: row.confirmed_at as string,
+  };
+}
+
+// ============================================
 // Update Handler
 // ============================================
 
@@ -303,16 +324,20 @@ async function handleCommand(
     case '/help':
       await sendMessage(
         chatId,
-        `*Commands:*\n/start - Welcome message\n/help - This help\n/balance - Show current balances\n/settle - Calculate settlements\n/cards - Show configured cards\n\n*Expense format:*\nJust type naturally!\n"lunch 30 at McDonald's"\n"groceries 80 at Costco"\n"50 USD Amazon"`,
+        `*Commands:*\n/start - Welcome message\n/help - This help\n/balance - Show current balances\n/settle - Calculate settlements\n/history - Recent transactions\n/cards - Show configured cards\n\n*Expense format:*\nJust type naturally!\n"lunch 30 at McDonald's"\n"groceries 80 at Costco"\n"50 USD Amazon"`,
         env.TELEGRAM_BOT_TOKEN,
         { parse_mode: 'Markdown' }
       );
       break;
 
     case '/balance': {
-      // Fetch confirmed shared transactions
+      // Fetch confirmed shared transactions (last 30 days, max 200)
       const balanceRows = await env.DB.prepare(`
-        SELECT * FROM transactions WHERE chat_id = ? AND status = 'confirmed' AND is_shared = 1
+        SELECT * FROM transactions
+        WHERE chat_id = ? AND status = 'confirmed' AND is_shared = 1
+          AND created_at > datetime('now', '-30 days')
+        ORDER BY created_at DESC
+        LIMIT 200
       `).bind(chatId).all();
 
       if (!balanceRows.results || balanceRows.results.length === 0) {
@@ -320,22 +345,7 @@ async function handleCommand(
         break;
       }
 
-      // Convert DB rows to Transaction objects
-      const transactions: Transaction[] = balanceRows.results.map((row: Record<string, unknown>) => ({
-        id: row.id as string,
-        date: row.created_at as string,
-        merchant: row.merchant as string,
-        amount: row.amount as number,
-        currency: row.currency as Currency,
-        category: row.category as Category,
-        cardLastFour: (row.card_last_four as string) || '',
-        payer: row.payer as string,
-        isShared: row.is_shared === 1,
-        splits: row.splits ? JSON.parse(row.splits as string) : {},
-        createdAt: row.created_at as string,
-        confirmedAt: row.confirmed_at as string,
-      }));
-
+      const transactions = balanceRows.results.map((row) => rowToTransaction(row as Record<string, unknown>));
       const balances = calculateBalances(transactions);
 
       if (balances.length === 0) {
@@ -355,9 +365,13 @@ async function handleCommand(
     }
 
     case '/settle': {
-      // Fetch confirmed shared transactions
+      // Fetch confirmed shared transactions (last 30 days, max 200)
       const settleRows = await env.DB.prepare(`
-        SELECT * FROM transactions WHERE chat_id = ? AND status = 'confirmed' AND is_shared = 1
+        SELECT * FROM transactions
+        WHERE chat_id = ? AND status = 'confirmed' AND is_shared = 1
+          AND created_at > datetime('now', '-30 days')
+        ORDER BY created_at DESC
+        LIMIT 200
       `).bind(chatId).all();
 
       if (!settleRows.results || settleRows.results.length === 0) {
@@ -365,22 +379,7 @@ async function handleCommand(
         break;
       }
 
-      // Convert DB rows to Transaction objects
-      const txns: Transaction[] = settleRows.results.map((row: Record<string, unknown>) => ({
-        id: row.id as string,
-        date: row.created_at as string,
-        merchant: row.merchant as string,
-        amount: row.amount as number,
-        currency: row.currency as Currency,
-        category: row.category as Category,
-        cardLastFour: (row.card_last_four as string) || '',
-        payer: row.payer as string,
-        isShared: row.is_shared === 1,
-        splits: row.splits ? JSON.parse(row.splits as string) : {},
-        createdAt: row.created_at as string,
-        confirmedAt: row.confirmed_at as string,
-      }));
-
+      const txns = settleRows.results.map((row) => rowToTransaction(row as Record<string, unknown>));
       const settlements = simplifyDebts(txns, 'CAD');
 
       if (settlements.length === 0) {
@@ -392,6 +391,31 @@ async function handleCommand(
       settleMsg += formatSettlements(settlements);
 
       await sendMessage(chatId, settleMsg, env.TELEGRAM_BOT_TOKEN, { parse_mode: 'Markdown' });
+      break;
+    }
+
+    case '/history': {
+      // Fetch recent transactions (last 10)
+      const historyRows = await env.DB.prepare(`
+        SELECT * FROM transactions
+        WHERE chat_id = ? AND status IN ('confirmed', 'personal')
+        ORDER BY created_at DESC
+        LIMIT 10
+      `).bind(chatId).all();
+
+      if (!historyRows.results || historyRows.results.length === 0) {
+        await sendMessage(chatId, '📜 No transaction history yet.', env.TELEGRAM_BOT_TOKEN);
+        break;
+      }
+
+      let historyMsg = `📜 *Recent Transactions*\n\n`;
+      historyRows.results.forEach((row: Record<string, unknown>) => {
+        const date = new Date(row.created_at as string).toLocaleDateString('en-CA');
+        const status = row.status === 'personal' ? '👤' : '✅';
+        historyMsg += `${status} ${date} | ${row.merchant} | $${(row.amount as number).toFixed(2)}\n`;
+      });
+
+      await sendMessage(chatId, historyMsg, env.TELEGRAM_BOT_TOKEN, { parse_mode: 'Markdown' });
       break;
     }
 
