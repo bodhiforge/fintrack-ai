@@ -27,14 +27,14 @@ jobs:
       - name: Install dependencies
         run: pnpm install
 
+      - name: Build
+        run: pnpm build
+
       - name: Type check
         run: pnpm typecheck
 
       - name: Run tests
         run: pnpm test
-
-      - name: Build
-        run: pnpm build
 
   deploy:
     needs: test
