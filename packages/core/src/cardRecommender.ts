@@ -26,7 +26,9 @@ export interface UserCardWithDetails extends UserCard {
 
 export interface RecommendationResult {
   readonly best: CardRecommendation;
+  readonly worst?: CardRecommendation;
   readonly alternatives: readonly CardRecommendation[];
+  readonly potentialLoss?: number;  // How much user would lose with worst card
   readonly missingCardSuggestion?: CardSuggestion;
 }
 
@@ -145,6 +147,7 @@ export function recommendCard(
 
   const [firstRecommendation, ...restRecommendations] = recommendations;
   const alternatives = restRecommendations.slice(0, 2);
+  const lastRecommendation = recommendations[recommendations.length - 1];
 
   // Check if best is actually optimal
   const isOptimal = alternatives.length === 0 ||
@@ -156,12 +159,20 @@ export function recommendCard(
     warning: restrictionWarning,
   };
 
+  // Calculate worst card and potential loss (only if more than 1 card)
+  const worst = recommendations.length > 1 ? lastRecommendation : undefined;
+  const potentialLoss = worst != null
+    ? Math.max(0, best.rewardValue - worst.rewardValue)
+    : undefined;
+
   // Check if user is missing a better card for this category
   const missingCardSuggestion = checkMissingCard(transaction, userCards, best, restriction);
 
   return {
     best,
+    worst,
     alternatives,
+    potentialLoss,
     missingCardSuggestion,
   };
 }
@@ -375,6 +386,37 @@ export function formatRecommendation(recommendation: CardRecommendation): string
       ];
 
   return [...warningLine, ...cardLines].join('\n');
+}
+
+export function formatRecommendationWithValue(
+  result: RecommendationResult
+): string {
+  const { best, worst, potentialLoss } = result;
+
+  const warningLine = best.warning != null
+    ? [`⚠️ _${best.warning}_`]
+    : [];
+
+  // Show reward with CAD value prominently
+  const valueDisplay = best.rewardValue > 0
+    ? `(≈$${best.rewardValue.toFixed(2)})`
+    : '';
+
+  const mainLines = [
+    `💳 *${best.card.name}*`,
+    `💰 ${best.reward} ${valueDisplay}`,
+  ];
+
+  // Show what they'd lose with wrong card
+  const comparisonLines = (worst != null && potentialLoss != null && potentialLoss > 0.01)
+    ? [
+        '',
+        `⚠️ _If you used ${worst.card.name}:_`,
+        `   _You'd lose $${potentialLoss.toFixed(2)}_`,
+      ]
+    : [];
+
+  return [...warningLine, ...mainLines, ...comparisonLines].join('\n');
 }
 
 export function formatBenefits(benefits: readonly CardBenefit[]): string {

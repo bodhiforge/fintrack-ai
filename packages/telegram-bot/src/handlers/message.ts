@@ -8,7 +8,7 @@ import {
   parseNaturalLanguageSplit,
   recommendCard,
   detectForeignByLocation,
-  formatRecommendation,
+  formatRecommendationWithValue,
   formatBenefits,
 } from '@fintrack-ai/core';
 import type { Environment, TelegramMessage, TelegramUser } from '../types.js';
@@ -158,9 +158,13 @@ export async function handleTextMessage(
     const foreignCheck = detectForeignByLocation(location ?? undefined, parsed.currency);
     const cardRecommendation = recommendCard(parsed, [...userCards], foreignCheck.isForeign);
 
-    const bestRecommendation = foreignCheck.warning != null && cardRecommendation.best.warning == null
-      ? { ...cardRecommendation.best, warning: foreignCheck.warning }
-      : cardRecommendation.best;
+    // Apply foreign warning if needed
+    const recommendation = foreignCheck.warning != null && cardRecommendation.best.warning == null
+      ? {
+          ...cardRecommendation,
+          best: { ...cardRecommendation.best, warning: foreignCheck.warning },
+        }
+      : cardRecommendation;
 
     const splitLines = Object.entries(splitResult.shares)
       .map(([person, share]) => `  ${person}: $${share.toFixed(2)}`);
@@ -168,9 +172,9 @@ export async function handleTextMessage(
     const cardSection = userCards.length > 0
       ? [
           '',
-          formatRecommendation(bestRecommendation),
-          ...(bestRecommendation.relevantBenefits.length > 0
-            ? [formatBenefits(bestRecommendation.relevantBenefits)]
+          formatRecommendationWithValue(recommendation),
+          ...(recommendation.best.relevantBenefits.length > 0
+            ? [formatBenefits(recommendation.best.relevantBenefits)]
             : []),
         ]
       : ['', '💳 _Add your cards with /cards to see rewards_'];

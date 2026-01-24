@@ -33,6 +33,7 @@ export {
   recommendCard,
   detectForeignByLocation,
   formatRecommendation,
+  formatRecommendationWithValue,
   formatBenefits,
   formatCardSuggestion,
   type UserCardWithDetails,
