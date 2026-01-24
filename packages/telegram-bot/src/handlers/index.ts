@@ -4,7 +4,7 @@
 
 import type { Environment, TelegramUpdate } from '../types.js';
 import { sendMessage } from '../telegram/api.js';
-import { handleTextMessage, handleLocationMessage } from './message.js';
+import { handleTextMessage, handleLocationMessage, handleVoiceMessage } from './message.js';
 import { handleCallbackQuery } from './callbacks/index.js';
 
 // ============================================
@@ -55,6 +55,10 @@ export async function handleUpdate(
     return;
   }
 
-  // TODO: Handle voice messages (Whisper API)
+  if (update.message?.voice != null) {
+    await handleVoiceMessage(update.message, environment);
+    return;
+  }
+
   // TODO: Handle photo messages (receipt OCR)
 }

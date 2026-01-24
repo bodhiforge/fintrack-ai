@@ -17,6 +17,7 @@ import { getOrCreateUser, getCurrentProject, getProjectMembers, getUserCards } f
 import { sendMessage } from '../telegram/api.js';
 import { detectCityFromCoords } from '../utils/index.js';
 import { handleCommand } from './commands/index.js';
+import { transcribeAudio, downloadTelegramFile } from '../services/whisper.js';
 
 // ============================================
 // Location Message Handler
@@ -70,6 +71,68 @@ export async function handleLocationMessage(
 }
 
 // ============================================
+// Voice Message Handler
+// ============================================
+
+export async function handleVoiceMessage(
+  message: TelegramMessage,
+  environment: Environment
+): Promise<void> {
+  const chatId = message.chat.id;
+  const telegramUser = message.from;
+
+  if (telegramUser == null || message.voice == null) {
+    return;
+  }
+
+  // Send "processing" indicator
+  await sendMessage(
+    chatId,
+    '🎤 _Processing voice message..._',
+    environment.TELEGRAM_BOT_TOKEN,
+    { parse_mode: 'Markdown' }
+  );
+
+  try {
+    // Download audio from Telegram
+    const audioBlob = await downloadTelegramFile(
+      message.voice.file_id,
+      environment.TELEGRAM_BOT_TOKEN
+    );
+
+    // Transcribe with Whisper
+    const transcription = await transcribeAudio(audioBlob, environment.OPENAI_API_KEY);
+
+    if (transcription.text === '') {
+      await sendMessage(
+        chatId,
+        '❌ Could not understand the voice message. Please try again.',
+        environment.TELEGRAM_BOT_TOKEN
+      );
+      return;
+    }
+
+    // Show transcription and process as text
+    await sendMessage(
+      chatId,
+      `🎤 _"${transcription.text}"_`,
+      environment.TELEGRAM_BOT_TOKEN,
+      { parse_mode: 'Markdown' }
+    );
+
+    // Process the transcribed text as a regular message
+    await processTransactionText(transcription.text, chatId, telegramUser, environment);
+  } catch (error) {
+    console.error('Voice processing error:', error);
+    await sendMessage(
+      chatId,
+      `❌ Failed to process voice: ${error instanceof Error ? error.message : 'Unknown error'}`,
+      environment.TELEGRAM_BOT_TOKEN
+    );
+  }
+}
+
+// ============================================
 // Text Message Handler
 // ============================================
 
@@ -91,6 +154,24 @@ export async function handleTextMessage(
     return;
   }
 
+  const trimmedText = text.trim();
+  if (trimmedText.length < 2) {
+    return;
+  }
+
+  await processTransactionText(trimmedText, chatId, telegramUser, environment);
+}
+
+// ============================================
+// Shared Transaction Processing
+// ============================================
+
+async function processTransactionText(
+  text: string,
+  chatId: number,
+  telegramUser: TelegramUser,
+  environment: Environment
+): Promise<void> {
   // Get or create user and their current project
   const user = await getOrCreateUser(environment, telegramUser);
   const project = await getCurrentProject(environment, user.id);
@@ -102,11 +183,6 @@ export async function handleTextMessage(
       `📁 No project selected.\n\nCreate one with /new or join with /join`,
       environment.TELEGRAM_BOT_TOKEN
     );
-    return;
-  }
-
-  const trimmedText = text.trim();
-  if (trimmedText.length < 2) {
     return;
   }
 
