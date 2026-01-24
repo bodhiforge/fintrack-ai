@@ -229,29 +229,38 @@ export interface NaturalLanguageSplitResult {
  * Parse natural language modifiers for splitting
  * Examples:
  * - "Alice didn't join" → exclude Alice
- * - "exclude Bob from beer" → partial exclude
- * - "Alice pays double" → custom split
+ * - "不算小明" → exclude 小明
+ * - "exclude Bob" → exclude Bob
  */
 export function parseNaturalLanguageSplit(
   text: string,
   allParticipants: readonly string[]
 ): NaturalLanguageSplitResult {
-  const lowerText = text.toLowerCase();
-
-  // Patterns for exclusion
-  const exclusionPatterns = [
+  // English exclusion patterns
+  const englishPatterns = [
     /(?:exclude|without|except|not including|minus)\s+(\w+)/gi,
     /(\w+)\s+(?:didn't|didnt|did not|wasn't|wasnt|was not|isn't|isnt|is not)\s+(?:join|participate|there|included|eating|drinking)/gi,
     /(?:no|not)\s+(\w+)/gi,
   ];
 
-  const excluded = exclusionPatterns.reduce<readonly string[]>((accumulator, pattern) => {
-    const matches = Array.from(lowerText.matchAll(pattern));
+  // Chinese exclusion patterns (match Chinese names with unicode)
+  const chinesePatterns = [
+    /(?:不算|除了|不包括|不含|排除|没有)(.+?)(?:的|$|\s|，|,)/gu,
+    /(.+?)(?:没参加|没参与|没吃|没来|不参与|不参加|缺席)/gu,
+  ];
+
+  const allPatterns = [...englishPatterns, ...chinesePatterns];
+
+  const excluded = allPatterns.reduce<readonly string[]>((accumulator, pattern) => {
+    const matches = Array.from(text.matchAll(pattern));
     return matches.reduce<readonly string[]>((innerAccumulator, match) => {
-      const name = match[1];
-      // Find matching participant (case-insensitive)
+      const name = match[1]?.trim();
+      if (name == null || name === '') {
+        return innerAccumulator;
+      }
+      // Find matching participant (case-insensitive for English, exact for Chinese)
       const participant = allParticipants.find(
-        (p) => p.toLowerCase() === name.toLowerCase()
+        (p) => p.toLowerCase() === name.toLowerCase() || p === name
       );
       if (participant != null && !innerAccumulator.includes(participant)) {
         return [...innerAccumulator, participant];
