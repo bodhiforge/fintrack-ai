@@ -5,7 +5,6 @@
 import {
   TransactionParser,
   splitExpense,
-  parseNaturalLanguageSplit,
   recommendCard,
   detectForeignByLocation,
   formatRecommendationWithValue,
@@ -187,23 +186,26 @@ async function processTransactionText(
   }
 
   try {
-    const parser = new TransactionParser(environment.OPENAI_API_KEY);
-    const { parsed, confidence, warnings } = await parser.parseNaturalLanguage(text);
-
     const membership = await environment.DB.prepare(
       'SELECT display_name FROM project_members WHERE project_id = ? AND user_id = ?'
     ).bind(project.id, user.id).first();
     const payerName = (membership?.display_name as string) ?? userName;
 
     const participants = await getProjectMembers(environment, project.id);
-    const splitMods = parseNaturalLanguageSplit(text, [...participants]);
+
+    // Parse transaction with participant context for split detection
+    const parser = new TransactionParser(environment.OPENAI_API_KEY);
+    const { parsed, confidence, warnings } = await parser.parseNaturalLanguage(text, {
+      participants: [...participants],
+    });
 
     const splitResult = splitExpense({
       totalAmount: parsed.amount,
       currency: parsed.currency,
       payer: payerName,
       participants: [...participants],
-      excludedParticipants: splitMods.excludedParticipants,
+      excludedParticipants: parsed.excludedParticipants != null ? [...parsed.excludedParticipants] : [],
+      customSplits: parsed.customSplits,
     });
 
     const location = parsed.location ?? project.defaultLocation ?? null;

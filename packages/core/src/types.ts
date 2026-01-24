@@ -33,6 +33,9 @@ export interface ParsedTransaction {
   readonly date: string;
   readonly location?: string;
   readonly rawText?: string;
+  // Split modifiers (extracted by LLM)
+  readonly excludedParticipants?: readonly string[];
+  readonly customSplits?: Readonly<Record<string, number>>;
 }
 
 // ============================================

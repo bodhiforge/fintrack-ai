@@ -19,6 +19,8 @@ Return ONLY valid JSON with these fields:
 - cardLastFour: string (last 4 digits if mentioned, otherwise "unknown")
 - date: string (YYYY-MM-DD format, use today's date if not specified)
 - location: string or null (city or country if mentioned, e.g., "San José", "Tokyo", "Costa Rica", otherwise null)
+- excludedParticipants: string[] (people mentioned as NOT participating, empty array if none)
+- customSplits: object or null (custom amount per person if mentioned, otherwise null)
 
 Category classification rules:
 - dining: restaurants, cafes, food delivery (Uber Eats, DoorDash, Skip)
@@ -37,6 +39,13 @@ Merchant normalization:
 - "UBER* EATS" → "Uber Eats"
 - "AMZN MKTP" → "Amazon"
 - "COSTCO WHOLESALE" → "Costco"
+
+Split modifier examples (match participant names exactly as provided):
+- "lunch 50 without Alice" → excludedParticipants: ["Alice"]
+- "晚饭120不算小明" → excludedParticipants: ["小明"]
+- "dinner 90, Bob pays 50, rest split" → customSplits: {"Bob": 50} (others split remaining 40)
+- "午饭80除了老王" → excludedParticipants: ["老王"]
+- "Alice didn't join" → excludedParticipants: ["Alice"]
 
 Return JSON only. No explanation.`;
 
@@ -68,9 +77,18 @@ export class TransactionParser {
 
   /**
    * Parse natural language input (e.g., "dinner 50 USD at Sukiya")
+   * @param text - The user input text
+   * @param options - Optional parsing options
+   * @param options.participants - List of participant names for split detection
    */
-  async parseNaturalLanguage(text: string): Promise<ParserResponse> {
-    return this.parse(text);
+  async parseNaturalLanguage(
+    text: string,
+    options?: { participants?: readonly string[] }
+  ): Promise<ParserResponse> {
+    const participantContext = options?.participants != null && options.participants.length > 0
+      ? `\n\nParticipants in this group: ${options.participants.join(', ')}`
+      : '';
+    return this.parse(text + participantContext);
   }
 
   /**
@@ -133,6 +151,16 @@ export class TransactionParser {
   private validate(parsed: Partial<ParsedTransaction>): ParsedTransaction {
     const today = new Date().toISOString().split('T')[0];
 
+    // Normalize excludedParticipants to array
+    const excludedParticipants = Array.isArray(parsed.excludedParticipants)
+      ? parsed.excludedParticipants.filter((p): p is string => typeof p === 'string' && p.length > 0)
+      : undefined;
+
+    // Normalize customSplits
+    const customSplits = parsed.customSplits != null && typeof parsed.customSplits === 'object'
+      ? parsed.customSplits
+      : undefined;
+
     return {
       merchant: parsed.merchant ?? 'Unknown',
       amount: typeof parsed.amount === 'number' ? parsed.amount : parseFloat(String(parsed.amount)) || 0,
@@ -141,6 +169,8 @@ export class TransactionParser {
       cardLastFour: parsed.cardLastFour ?? 'unknown',
       date: parsed.date ?? today,
       location: parsed.location ?? undefined,
+      excludedParticipants: excludedParticipants != null && excludedParticipants.length > 0 ? excludedParticipants : undefined,
+      customSplits,
     };
   }
 

@@ -22,7 +22,6 @@ export {
   calculateBalances,
   simplifyDebts,
   formatSettlements,
-  parseNaturalLanguageSplit,
   convertCurrency,
   DEFAULT_RATES,
 } from './splitter.js';
