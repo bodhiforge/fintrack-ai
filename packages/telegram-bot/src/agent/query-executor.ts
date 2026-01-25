@@ -46,6 +46,65 @@ function rowToTransaction(row: Readonly<Record<string, unknown>>): Transaction {
 }
 
 // ============================================
+// SQL Sanitization
+// ============================================
+
+/**
+ * Remove ORDER BY, LIMIT, and other clauses from WHERE clause
+ * The LLM sometimes includes these in sqlWhere by mistake
+ */
+function sanitizeSqlWhere(sqlWhere: string): string {
+  let result = sqlWhere;
+
+  // Remove ORDER BY and everything after it
+  const orderByIndex = result.toUpperCase().indexOf('ORDER BY');
+  if (orderByIndex !== -1) {
+    result = result.substring(0, orderByIndex).trim();
+  }
+
+  // Remove LIMIT and everything after it
+  const limitIndex = result.toUpperCase().indexOf('LIMIT');
+  if (limitIndex !== -1) {
+    result = result.substring(0, limitIndex).trim();
+  }
+
+  // Remove GROUP BY (should not be in WHERE clause)
+  const groupByIndex = result.toUpperCase().indexOf('GROUP BY');
+  if (groupByIndex !== -1) {
+    result = result.substring(0, groupByIndex).trim();
+  }
+
+  // Remove trailing AND/OR
+  result = result.replace(/\s+(AND|OR)\s*$/i, '').trim();
+
+  return result;
+}
+
+/**
+ * Remove LIMIT from ORDER BY clause
+ */
+function sanitizeSqlOrderBy(sqlOrderBy: string | undefined): string {
+  if (sqlOrderBy == null) {
+    return 'created_at DESC';
+  }
+
+  let result = sqlOrderBy;
+
+  // Remove LIMIT and everything after it
+  const limitIndex = result.toUpperCase().indexOf('LIMIT');
+  if (limitIndex !== -1) {
+    result = result.substring(0, limitIndex).trim();
+  }
+
+  // If empty after sanitization, use default
+  if (result.trim() === '') {
+    return 'created_at DESC';
+  }
+
+  return result;
+}
+
+// ============================================
 // Query Execution
 // ============================================
 
@@ -54,6 +113,11 @@ export async function executeQuery(
   context: QueryExecutorContext
 ): Promise<ToolResult<QueryResult>> {
   const { db, projectId } = context;
+
+  // Sanitize sqlWhere to remove any ORDER BY/LIMIT that LLM might have included
+  const sanitizedWhere = sanitizeSqlWhere(query.sqlWhere);
+  console.log('[QueryExecutor] Original sqlWhere:', query.sqlWhere);
+  console.log('[QueryExecutor] Sanitized sqlWhere:', sanitizedWhere);
 
   try {
     // For balance/settlement, delegate to existing commands
@@ -68,8 +132,8 @@ export async function executeQuery(
         followUp: {
           type: 'clarify',
           message: query.queryType === 'balance'
-            ? '使用 /balance 查看余额'
-            : '使用 /settle 查看结算方案',
+            ? 'Use /balance to see who owes whom'
+            : 'Use /settle to see settlement options',
         },
       };
     }
@@ -83,16 +147,18 @@ export async function executeQuery(
     const countSql = `
       SELECT COUNT(*) as total
       FROM transactions
-      WHERE project_id = ? AND ${query.sqlWhere}
+      WHERE project_id = ? AND ${sanitizedWhere}
     `;
 
     // Build data query
     const limit = query.limit ?? 50;
-    const orderBy = query.sqlOrderBy ?? 'created_at DESC';
+    const orderBy = sanitizeSqlOrderBy(query.sqlOrderBy);
+    console.log('[QueryExecutor] Original sqlOrderBy:', query.sqlOrderBy);
+    console.log('[QueryExecutor] Sanitized sqlOrderBy:', orderBy);
     const dataSql = `
       SELECT *
       FROM transactions
-      WHERE project_id = ? AND ${query.sqlWhere}
+      WHERE project_id = ? AND ${sanitizedWhere}
       ORDER BY ${orderBy}
       LIMIT ?
     `;
@@ -127,12 +193,13 @@ async function executeBreakdownQuery(
   context: QueryExecutorContext
 ): Promise<ToolResult<QueryResult>> {
   const { db, projectId } = context;
+  const sanitizedWhere = sanitizeSqlWhere(query.sqlWhere);
 
   try {
     const breakdownSql = `
       SELECT category, SUM(amount) as total_amount, COUNT(*) as count
       FROM transactions
-      WHERE project_id = ? AND ${query.sqlWhere}
+      WHERE project_id = ? AND ${sanitizedWhere}
       GROUP BY category
       ORDER BY total_amount DESC
     `;

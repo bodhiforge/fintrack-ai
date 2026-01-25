@@ -142,7 +142,8 @@ export class IntentClassifier {
         entities: this.normalizeEntities(parsed.entities),
       };
     } catch (error) {
-      console.error('Intent classification error:', error);
+      console.error('[IntentClassifier] Error:', error instanceof Error ? error.message : error);
+      console.error('[IntentClassifier] Stack:', error instanceof Error ? error.stack : 'no stack');
       return this.fallbackResult();
     }
   }

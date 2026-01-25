@@ -52,6 +52,8 @@ export async function processWithAgent(
   const classifier = new IntentClassifier(environment.OPENAI_API_KEY);
   const intentResult = await classifier.classify(text);
 
+  console.log(`[Agent] Intent: ${intentResult.intent}, confidence: ${intentResult.confidence}, text: "${text}"`);
+
   // Route based on intent
   return routeIntent(text, intentResult, context);
 }
@@ -116,7 +118,7 @@ async function handleQueryIntent(
   if (entities.queryType === 'settlement') {
     return {
       type: 'message',
-      message: '使用 /settle 查看结算方案',
+      message: 'Use /settle to see settlement options',
     };
   }
 
@@ -134,7 +136,7 @@ async function handleQueryIntent(
   if (!result.success || result.data == null) {
     return {
       type: 'error',
-      message: `❌ 查询失败: ${result.error ?? 'Unknown error'}`,
+      message: `❌ Query failed: ${result.error ?? 'Unknown error'}`,
     };
   }
 
@@ -185,7 +187,7 @@ async function handleModifyIntent(
     if (lastTransaction == null) {
       return {
         type: 'message',
-        message: '❌ 没有找到最近的交易记录',
+        message: '❌ No recent transaction found',
       };
     }
 
@@ -193,11 +195,11 @@ async function handleModifyIntent(
     if (entities.modifyAction === 'delete') {
       return {
         type: 'confirm',
-        message: `删除 *${lastTransaction.merchant}* ($${lastTransaction.amount.toFixed(2)})?`,
+        message: `Delete *${lastTransaction.merchant}* ($${lastTransaction.amount.toFixed(2)})?`,
         keyboard: [
           [
-            { text: '✅ 确认删除', callback_data: `delete_${lastTransaction.id}` },
-            { text: '❌ 取消', callback_data: 'menu_main' },
+            { text: '✅ Confirm', callback_data: `delete_${lastTransaction.id}` },
+            { text: '❌ Cancel', callback_data: 'menu_main' },
           ],
         ],
       };
@@ -211,11 +213,11 @@ async function handleModifyIntent(
       // For direct value edits, trigger the edit callback
       return {
         type: 'confirm',
-        message: `修改 *${lastTransaction.merchant}* 的${getFieldName(field)}为 ${entities.newValue}?`,
+        message: `Change ${getFieldName(field)} of *${lastTransaction.merchant}* to ${entities.newValue}?`,
         keyboard: [
           [
-            { text: '✅ 确认', callback_data: `${callbackPrefix}_${lastTransaction.id}_${entities.newValue}` },
-            { text: '❌ 取消', callback_data: 'menu_main' },
+            { text: '✅ Confirm', callback_data: `${callbackPrefix}_${lastTransaction.id}_${entities.newValue}` },
+            { text: '❌ Cancel', callback_data: 'menu_main' },
           ],
         ],
       };
@@ -234,7 +236,7 @@ async function handleModifyIntent(
 
       return {
         type: 'message',
-        message: `✏️ 编辑 *${lastTransaction.merchant}* ($${lastTransaction.amount.toFixed(2)})\n\n请输入新的${getFieldName(field)}:`,
+        message: `✏️ Edit *${lastTransaction.merchant}* ($${lastTransaction.amount.toFixed(2)})\n\nEnter new ${getFieldName(field)}:`,
         parseMode: 'Markdown',
       };
     }
@@ -243,7 +245,7 @@ async function handleModifyIntent(
   // Generic modify request without clear target
   return {
     type: 'message',
-    message: '🤔 请指定要修改的交易\n\n例如:\n- "改成50" (修改上一笔金额)\n- "删掉上一笔"\n- 使用 /history 查看交易列表',
+    message: '🤔 Please specify which transaction to modify\n\nExamples:\n- "change to 50" (edit last amount)\n- "delete the last one"\n- Use /history to see transactions',
   };
 }
 
@@ -259,11 +261,11 @@ async function handleChatIntent(
 
   return {
     type: 'message',
-    message: `👋 Hi! 我是记账助手\n\n` +
-      `📁 当前项目: *${project.name}*\n\n` +
-      `发送消费记录，如 "coffee 5" 或 "午饭 30"\n` +
-      `查询消费，如 "这个月花了多少"\n\n` +
-      `使用 /help 查看更多命令`,
+    message: `👋 Hi! I'm your expense tracking assistant\n\n` +
+      `📁 Current project: *${project.name}*\n\n` +
+      `Log expenses like "coffee 5" or "lunch 30"\n` +
+      `Query spending like "how much this month"\n\n` +
+      `Use /help for more commands`,
     parseMode: 'Markdown',
   };
 }
@@ -292,11 +294,11 @@ async function handleSessionFlow(
       // Return a confirmation
       return {
         type: 'confirm',
-        message: `确认将${getFieldName(field)}改为 ${text}?`,
+        message: `Change ${getFieldName(field)} to ${text}?`,
         keyboard: [
           [
-            { text: '✅ 确认', callback_data: `${callbackPrefix}_${state.transactionId}_${text}` },
-            { text: '❌ 取消', callback_data: 'menu_main' },
+            { text: '✅ Confirm', callback_data: `${callbackPrefix}_${state.transactionId}_${text}` },
+            { text: '❌ Cancel', callback_data: 'menu_main' },
           ],
         ],
       };
@@ -306,21 +308,21 @@ async function handleSessionFlow(
       await clearSession(environment.DB, user.id, context.chatId);
 
       const lowerText = text.toLowerCase();
-      if (lowerText === 'yes' || lowerText === '是' || lowerText === '确认' || lowerText === 'y') {
+      if (lowerText === 'yes' || lowerText === 'y' || lowerText === 'ok') {
         return {
           type: 'confirm',
-          message: '确认执行?',
+          message: 'Confirm action?',
           keyboard: [
             [
-              { text: '✅ 确认', callback_data: `${state.action}_${state.targetId}` },
-              { text: '❌ 取消', callback_data: 'menu_main' },
+              { text: '✅ Confirm', callback_data: `${state.action}_${state.targetId}` },
+              { text: '❌ Cancel', callback_data: 'menu_main' },
             ],
           ],
         };
       } else {
         return {
           type: 'message',
-          message: '已取消',
+          message: 'Cancelled',
         };
       }
     }
@@ -349,10 +351,10 @@ function getEditCallbackPrefix(field: string): string {
 
 function getFieldName(field: string): string {
   const names: Record<string, string> = {
-    amount: '金额',
-    merchant: '商家',
-    category: '类别',
-    split: '分账',
+    amount: 'amount',
+    merchant: 'merchant',
+    category: 'category',
+    split: 'split',
   };
   return names[field] ?? field;
 }

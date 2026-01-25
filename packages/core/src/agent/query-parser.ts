@@ -162,7 +162,7 @@ export class QueryParser {
       timeRange: {
         start,
         end: new Date().toISOString().split('T')[0],
-        label: '最近30天',
+        label: 'Last 30 days',
       },
       limit: 10,
       sqlWhere: "status IN ('confirmed', 'personal')",

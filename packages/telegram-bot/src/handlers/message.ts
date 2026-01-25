@@ -121,8 +121,34 @@ export async function handleVoiceMessage(
       { parse_mode: 'Markdown' }
     );
 
-    // Process the transcribed text as a regular message
-    await processTransactionText(transcription.text, chatId, telegramUser, environment);
+    // Route through agent for intent classification
+    const user = await getOrCreateUser(environment, telegramUser);
+    const project = await getCurrentProject(environment, user.id);
+
+    if (project == null) {
+      await sendMessage(
+        chatId,
+        `📁 No project selected.\n\nCreate one with /new or join with /join`,
+        environment.TELEGRAM_BOT_TOKEN
+      );
+      return;
+    }
+
+    const agentContext: AgentContext = {
+      chatId,
+      user,
+      project,
+      environment,
+      telegramUser,
+    };
+
+    try {
+      const result = await processWithAgent(transcription.text, agentContext);
+      await handleAgentResult(result, chatId, telegramUser, environment);
+    } catch (error) {
+      console.error('[Agent] Error in voice processWithAgent:', error);
+      await processTransactionText(transcription.text, chatId, telegramUser, environment);
+    }
   } catch (error) {
     console.error('Voice processing error:', error);
     await sendMessage(
@@ -370,10 +396,17 @@ export async function handleTextMessage(
     telegramUser,
   };
 
-  const result = await processWithAgent(trimmedText, agentContext);
+  try {
+    const result = await processWithAgent(trimmedText, agentContext);
+    console.log(`[Agent] Result type: ${result.type}`);
 
-  // Handle agent result
-  await handleAgentResult(result, chatId, telegramUser, environment);
+    // Handle agent result
+    await handleAgentResult(result, chatId, telegramUser, environment);
+  } catch (error) {
+    console.error('[Agent] Error in processWithAgent:', error);
+    // Fallback to legacy parser on agent error
+    await processTransactionText(trimmedText, chatId, telegramUser, environment);
+  }
 }
 
 // ============================================

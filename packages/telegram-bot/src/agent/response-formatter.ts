@@ -10,19 +10,19 @@ import type { ParsedQuery, QuerySummary, Transaction } from '@fintrack-ai/core';
 // ============================================
 
 const CATEGORY_NAMES: Readonly<Record<string, string>> = {
-  dining: '餐饮',
-  grocery: '超市',
-  gas: '加油',
-  shopping: '购物',
-  subscription: '订阅',
-  travel: '旅行',
-  transport: '交通',
-  entertainment: '娱乐',
-  health: '健康',
-  utilities: '水电',
-  sports: '运动',
-  education: '教育',
-  other: '其他',
+  dining: 'Dining',
+  grocery: 'Grocery',
+  gas: 'Gas',
+  shopping: 'Shopping',
+  subscription: 'Subscription',
+  travel: 'Travel',
+  transport: 'Transport',
+  entertainment: 'Entertainment',
+  health: 'Health',
+  utilities: 'Utilities',
+  sports: 'Sports',
+  education: 'Education',
+  other: 'Other',
 };
 
 function getCategoryName(category: string): string {
@@ -46,7 +46,7 @@ function formatDateRange(
   const endDate = new Date(end);
 
   const formatDate = (d: Date): string => {
-    return `${d.getMonth() + 1}月${d.getDate()}日`;
+    return d.toLocaleDateString('en-US', { month: 'short', day: 'numeric' });
   };
 
   return `${formatDate(startDate)} - ${formatDate(endDate)}`;
@@ -62,19 +62,19 @@ export function formatTotalResponse(
   currency: string
 ): string {
   const title = query.category != null
-    ? `📊 *${getCategoryName(query.category)}统计*`
-    : '📊 *消费统计*';
+    ? `📊 *${getCategoryName(query.category)} Summary*`
+    : '📊 *Spending Summary*';
 
   const dateRange = query.timeRange != null
     ? formatDateRange(query.timeRange.start, query.timeRange.end, query.timeRange.label)
-    : '全部';
+    : 'All time';
 
   const lines = [
     title,
     `📅 ${dateRange}`,
     '',
-    `💰 总计: $${summary.totalAmount.toFixed(2)} ${currency}`,
-    `📝 ${summary.transactionCount} 笔交易`,
+    `💰 Total: $${summary.totalAmount.toFixed(2)} ${currency}`,
+    `📝 ${summary.transactionCount} transactions`,
   ];
 
   return lines.join('\n');
@@ -91,10 +91,10 @@ export function formatBreakdownResponse(
 ): string {
   const dateRange = query.timeRange != null
     ? formatDateRange(query.timeRange.start, query.timeRange.end, query.timeRange.label)
-    : '全部';
+    : 'All time';
 
   const lines = [
-    '📊 *各类消费统计*',
+    '📊 *Spending by Category*',
     `📅 ${dateRange}`,
     '',
   ];
@@ -111,7 +111,7 @@ export function formatBreakdownResponse(
   });
 
   lines.push('');
-  lines.push(`💰 总计: $${summary.totalAmount.toFixed(2)} ${currency}`);
+  lines.push(`💰 Total: $${summary.totalAmount.toFixed(2)} ${currency}`);
 
   return lines.join('\n');
 }
@@ -127,7 +127,7 @@ export function formatHistoryResponse(
   currency: string
 ): string {
   if (transactions.length === 0) {
-    return '📝 没有找到交易记录';
+    return '📝 No transactions found';
   }
 
   const dateRange = query.timeRange != null
@@ -135,7 +135,7 @@ export function formatHistoryResponse(
     : '';
 
   const lines = [
-    '📝 *交易记录*',
+    '📝 *Transaction History*',
   ];
 
   if (dateRange !== '') {
@@ -157,7 +157,7 @@ export function formatHistoryResponse(
 
   if (total > 10) {
     lines.push('');
-    lines.push(`_显示 10/${total} 条，使用 /history 查看更多_`);
+    lines.push(`_Showing 10 of ${total}. Use /history for more._`);
   }
 
   return lines.join('\n');
