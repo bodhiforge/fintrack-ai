@@ -6,6 +6,7 @@
 import type { Environment, TelegramUpdate } from './types.js';
 import { setWebhook } from './telegram/api.js';
 import { handleUpdate } from './handlers/index.js';
+import { EmbeddingService } from './services/embedding.js';
 
 // ============================================
 // Main Handler
@@ -33,6 +34,11 @@ export default {
     // Setup webhook endpoint
     if (url.pathname === '/setup-webhook') {
       return handleSetupWebhook(url, environment);
+    }
+
+    // Backfill embeddings endpoint (one-time use)
+    if (url.pathname === '/backfill-embeddings') {
+      return handleBackfillEmbeddings(environment);
     }
 
     return new Response('Not Found', { status: 404 });
@@ -96,4 +102,61 @@ async function handleSetupWebhook(
   return new Response(JSON.stringify(result), {
     headers: { 'Content-Type': 'application/json' },
   });
+}
+
+async function handleBackfillEmbeddings(
+  environment: Environment
+): Promise<Response> {
+  try {
+    // Fetch all confirmed/personal transactions
+    const result = await environment.DB.prepare(`
+      SELECT id, merchant, amount, category, currency, location
+      FROM transactions
+      WHERE status IN ('confirmed', 'personal')
+    `).all();
+
+    const transactions = result.results ?? [];
+    console.log(`[Backfill] Found ${transactions.length} transactions to process`);
+
+    const embeddingService = new EmbeddingService(environment);
+    let processed = 0;
+    let errors = 0;
+
+    // Process one by one to avoid rate limits
+    for (const row of transactions) {
+      try {
+        await embeddingService.storeTransaction({
+          id: row.id as string,
+          merchant: row.merchant as string,
+          amount: row.amount as number,
+          category: row.category as string,
+          currency: row.currency as string,
+          location: row.location as string | undefined,
+        });
+        processed++;
+        console.log(`[Backfill] Processed ${processed}/${transactions.length}: ${row.merchant}`);
+      } catch (error) {
+        console.error(`[Backfill] Error processing ${row.id}:`, error);
+        errors++;
+      }
+    }
+
+    return new Response(JSON.stringify({
+      success: true,
+      processed,
+      errors,
+      total: transactions.length,
+    }), {
+      headers: { 'Content-Type': 'application/json' },
+    });
+  } catch (error) {
+    console.error('[Backfill] Error:', error);
+    return new Response(JSON.stringify({
+      success: false,
+      error: error instanceof Error ? error.message : 'Unknown error',
+    }), {
+      status: 500,
+      headers: { 'Content-Type': 'application/json' },
+    });
+  }
 }

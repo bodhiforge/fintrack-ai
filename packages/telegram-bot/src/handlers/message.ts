@@ -12,7 +12,7 @@ import { TransactionStatus } from '../constants.js';
 
 // Confidence threshold for triggering clarification flow
 const CLARIFICATION_THRESHOLD = 0.7;
-import { getOrCreateUser, getCurrentProject, getProjectMembers, getRecentExamples } from '../db/index.js';
+import { getOrCreateUser, getCurrentProject, getProjectMembers, getRecentExamples, getSimilarExamples } from '../db/index.js';
 import { sendMessage } from '../telegram/api.js';
 import { detectCityFromCoords } from '../utils/index.js';
 import { handleCommand } from './commands/index.js';
@@ -567,8 +567,16 @@ export async function processTransactionText(
 
     const participants = await getProjectMembers(environment, project.id);
 
-    // Fetch user's recent transactions for few-shot learning
-    const historyExamples = await getRecentExamples(environment.DB, user.id, 10);
+    // Fetch similar transactions for few-shot learning (semantic search)
+    // Falls back to empty array if Vectorize is not available or has no data
+    const semanticExamples = await getSimilarExamples(environment, text, { topK: 5, minScore: 0.6 });
+
+    // If no semantic matches, fall back to recent transactions
+    const historyExamples = semanticExamples.length > 0
+      ? semanticExamples
+      : await getRecentExamples(environment.DB, user.id, 5);
+
+    console.log(`[Parser] Using ${semanticExamples.length > 0 ? 'semantic' : 'recent'} examples: ${historyExamples.length}`);
 
     // Parse transaction with project context and few-shot examples
     const parser = new TransactionParser(environment.OPENAI_API_KEY);

@@ -14,6 +14,7 @@ export interface Environment {
   readonly DEFAULT_PARTICIPANTS?: string;
   readonly ALLOWED_USERS?: string;
   readonly DB: D1Database;
+  readonly VECTORIZE: VectorizeIndex;
 }
 
 // ============================================
