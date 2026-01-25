@@ -51,34 +51,53 @@ AI: "Got it. $50 split between you and Bob. Alice excluded.
 
 ## AI Agent Architecture
 
-The bot uses an intelligent Agent pattern for natural interactions:
+The bot uses a **Memory-First Agent** pattern for context-aware conversations:
 
 ```
-User: "how much on dining this month"
+User: "hmark 62.64"
          ↓
 ┌─────────────────────────┐
-│   Intent Classifier     │ → intent: query, queryType: total
-│   (gpt-4o-mini)         │ → category: dining, timeRange: this month
+│    Working Memory       │ → lastTransaction: null
 └─────────────────────────┘
          ↓
 ┌─────────────────────────┐
-│   Query Executor        │ → SQL query against D1
+│    Memory Agent         │ → action: record
+│    (gpt-4o-mini)        │ → Creates transaction
 └─────────────────────────┘
          ↓
-Bot: "📊 Dining Summary
-      📅 Jan 1 - Jan 25
-      💰 Total: $103.20 CAD
-      📝 2 transactions"
+Bot: "💳 hmark $62.64"
+
+User: "No, I mean H Mart"
+         ↓
+┌─────────────────────────┐
+│    Working Memory       │ → lastTransaction: {merchant: "hmark", ...}
+└─────────────────────────┘
+         ↓
+┌─────────────────────────┐
+│    Memory Agent         │ → action: modify
+│    (understands context)│ → Updates merchant to "H Mart"
+└─────────────────────────┘
+         ↓
+Bot: "Updated merchant: hmark → H Mart"
 ```
 
-### Intent Types
+### Working Memory
 
-| Intent | Example | Handler |
-|--------|---------|---------|
-| `record` | "coffee 5" | TransactionParser |
-| `query` | "how much this month" | QueryExecutor |
-| `modify` | "change to 50" | EditHandler |
-| `chat` | "hello" | GreetingResponse |
+The agent maintains context for natural corrections:
+- **lastTransaction**: Most recent transaction (10-min TTL)
+- **recentMessages**: Last 5 conversation messages
+- Recognizes: "No, I mean X", "Actually 25", "That was at Costco"
+
+### Action Types
+
+| Action | Example | Description |
+|--------|---------|-------------|
+| `record` | "coffee 5" | Log new expense |
+| `query` | "how much this month" | View/analyze expenses |
+| `modify` | "No, I mean H Mart" | Edit last transaction |
+| `delete` | "delete the last one" | Remove transaction |
+| `clarify` | (ambiguous input) | Ask for more info |
+| `respond` | "hello" | General chat |
 
 ### Semantic Few-shot Learning
 
@@ -185,7 +204,7 @@ curl https://your-worker.workers.dev/setup-webhook
 │                    Storage Layer                            │
 │  ┌──────────────────────────────────────────────────┐      │
 │  │              Cloudflare D1 (SQLite)               │      │
-│  │  users | projects | transactions | sessions       │      │
+│  │  users | projects | transactions | working_memory │      │
 │  └──────────────────────────────────────────────────┘      │
 │  ┌──────────────────────────────────────────────────┐      │
 │  │           Cloudflare Vectorize                    │      │
@@ -200,9 +219,10 @@ curl https://your-worker.workers.dev/setup-webhook
 packages/
 ├── core/                     # Shared business logic
 │   ├── agent/                # AI Agent system
-│   │   ├── intent-classifier.ts  # Single LLM call for intent + entities + SQL
-│   │   ├── query-parser.ts       # Natural language → SQL (backup)
-│   │   └── types.ts              # Agent types
+│   │   ├── memory-agent.ts       # Memory-aware action decision
+│   │   ├── action-schema.ts      # Unified action types (Zod)
+│   │   ├── intent-classifier.ts  # Legacy intent classifier
+│   │   └── types.ts              # Agent + memory types
 │   ├── parser.ts             # AI transaction parsing
 │   ├── splitter.ts           # Expense splitting & debt simplification
 │   └── types.ts              # TypeScript types
@@ -210,9 +230,10 @@ packages/
 │   └── src/
 │       ├── index.ts          # Entry point (HTTP routing)
 │       ├── agent/            # Agent orchestration
-│       │   ├── index.ts          # Main router
+│       │   ├── index.ts          # Main router (uses MemoryAgent)
+│       │   ├── action-executor.ts# Execute agent actions
+│       │   ├── memory-session.ts # Working memory CRUD
 │       │   ├── query-executor.ts # D1 query execution
-│       │   ├── session.ts        # Multi-turn state
 │       │   └── response-formatter.ts
 │       ├── services/         # AI services
 │       │   ├── embedding.ts      # Vectorize for few-shot
@@ -233,18 +254,19 @@ packages/
 - [x] **Phase 2.5: Code Quality** - Modular architecture, immutability
 - [x] **Phase 3: Agent Architecture** - Intent routing, natural language queries
 - [x] **Phase 3.5: Semantic Few-shot** - Embedding-based personalized parsing
-- [ ] **Phase 4: Proactive Suggestions** - Anomaly detection, spending insights
-- [ ] **Phase 5: Gmail Integration** - Auto-parse bank emails
+- [x] **Phase 4: Memory-First Agent** - Context-aware corrections, working memory
+- [ ] **Phase 5: Proactive Suggestions** - Anomaly detection, spending insights
+- [ ] **Phase 6: Gmail Integration** - Auto-parse bank emails
 
 ## Recent Commits
 
 | Commit | Description |
 |--------|-------------|
+| `0d15270` | feat: implement memory-first agent architecture |
 | `6560410` | feat: add embedding-based semantic few-shot retrieval |
 | `bda4088` | feat: add low-confidence intent clarification dialog |
 | `706ded9` | perf: merge IntentClassifier and QueryParser into single LLM call |
 | `27db182` | feat: add Agent architecture with intent routing and query tools |
-| `ec984a5` | feat: add custom category input with /editcat command |
 
 ## License
 
