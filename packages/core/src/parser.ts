@@ -21,12 +21,12 @@ const ConfidenceSchema = z.object({
 const ExpenseSchema = z.object({
   merchant: z.string().describe('What they paid for - store name, item, or activity'),
   amount: z.number().describe('The amount spent'),
-  currency: z.string().default('CAD').describe('Currency code (CAD, USD, EUR, etc.)'),
+  currency: z.string().describe('Currency code (CAD, USD, EUR, etc.). Use CAD if not specified.'),
   category: z.string().describe('Expense category: dining, grocery, gas, shopping, subscription, travel, transport, entertainment, health, utilities, sports, education, or other'),
-  cardLastFour: z.string().default('unknown').describe('Last 4 digits of card if mentioned'),
+  cardLastFour: z.string().describe('Last 4 digits of card if mentioned, or "unknown"'),
   date: z.string().describe('Date in YYYY-MM-DD format'),
   location: z.string().nullable().describe('City or country if mentioned'),
-  excludedParticipants: z.array(z.string()).default([]).describe('Names of people NOT splitting this expense'),
+  excludedParticipants: z.array(z.string()).describe('Names of people NOT splitting this expense. Empty array if none.'),
   customSplits: z.record(z.string(), z.number()).nullable().describe('Custom split amounts per person'),
   confidence: ConfidenceSchema.describe('Your confidence in each extracted field'),
 });
