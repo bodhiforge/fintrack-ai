@@ -38,7 +38,7 @@ AI: "Got it. $50 split between you and Bob. Alice excluded.
 | **Semantic Few-shot** | ✅ | Embedding-based retrieval for personalized parsing |
 | **Voice Input** | ✅ | Whisper transcription → Agent routing |
 | **AI Parsing** | ✅ | Natural language → structured transaction via GPT-4o-mini |
-| **Natural Language Query** | ✅ | "这个月花了多少" → instant answer |
+| **Natural Language Query** | ✅ | "how much this month" → instant answer |
 | **Multi-Project** | ✅ | Separate expenses by trip/event with invite codes |
 | **Smart Splitting** | ✅ | "dinner 50, exclude Alice" → auto-split |
 | **Multi-Currency** | ✅ | Per-project currency, grouped balance/settle |
@@ -54,7 +54,7 @@ AI: "Got it. $50 split between you and Bob. Alice excluded.
 The bot uses an intelligent Agent pattern for natural interactions:
 
 ```
-User: "这个月餐饮花了多少"
+User: "how much on dining this month"
          ↓
 ┌─────────────────────────┐
 │   Intent Classifier     │ → intent: query, queryType: total
@@ -65,10 +65,10 @@ User: "这个月餐饮花了多少"
 │   Query Executor        │ → SQL query against D1
 └─────────────────────────┘
          ↓
-Bot: "📊 餐饮统计
-      📅 1月1日 - 1月25日
-      💰 总计: $103.20 CAD
-      📝 2 笔交易"
+Bot: "📊 Dining Summary
+      📅 Jan 1 - Jan 25
+      💰 Total: $103.20 CAD
+      📝 2 transactions"
 ```
 
 ### Intent Types
@@ -76,9 +76,9 @@ Bot: "📊 餐饮统计
 | Intent | Example | Handler |
 |--------|---------|---------|
 | `record` | "coffee 5" | TransactionParser |
-| `query` | "这个月花了多少" | QueryExecutor |
-| `modify` | "改成50" | EditHandler |
-| `chat` | "你好" | GreetingResponse |
+| `query` | "how much this month" | QueryExecutor |
+| `modify` | "change to 50" | EditHandler |
+| `chat` | "hello" | GreetingResponse |
 
 ### Semantic Few-shot Learning
 

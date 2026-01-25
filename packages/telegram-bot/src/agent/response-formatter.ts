@@ -81,6 +81,47 @@ export function formatTotalResponse(
 }
 
 // ============================================
+// Top/Extreme Query Response (most expensive, cheapest, etc.)
+// ============================================
+
+export function formatTopResponse(
+  query: ParsedQuery,
+  transactions: readonly Transaction[],
+  currency: string,
+  isDescending: boolean
+): string {
+  if (transactions.length === 0) {
+    return '📝 No transactions found';
+  }
+
+  const transaction = transactions[0];
+  const title = isDescending ? '💎 *Most Expensive*' : '🪙 *Cheapest*';
+
+  const dateRange = query.timeRange != null
+    ? formatDateRange(query.timeRange.start, query.timeRange.end, query.timeRange.label)
+    : 'All time';
+
+  const date = new Date(transaction.createdAt);
+  const dateStr = date.toLocaleDateString('en-US', { month: 'short', day: 'numeric' });
+
+  const lines = [
+    title,
+    `📅 ${dateRange}`,
+    '',
+    `🏪 ${transaction.merchant}`,
+    `💰 $${transaction.amount.toFixed(2)} ${currency}`,
+    `📁 ${getCategoryName(transaction.category)}`,
+    `📆 ${dateStr}`,
+  ];
+
+  if (transaction.location != null) {
+    lines.push(`📍 ${transaction.location}`);
+  }
+
+  return lines.join('\n');
+}
+
+// ============================================
 // Breakdown Query Response
 // ============================================
 
@@ -172,6 +213,23 @@ export interface QueryFormatResult {
   readonly parseMode: 'Markdown';
 }
 
+/**
+ * Detect if this is a "top" query (most expensive, cheapest, etc.)
+ */
+function isTopQuery(query: ParsedQuery): { isTop: boolean; isDescending: boolean } {
+  // Check for limit=1 with ORDER BY amount
+  if (query.limit === 1 && query.sqlOrderBy != null) {
+    const orderBy = query.sqlOrderBy.toUpperCase();
+    if (orderBy.includes('AMOUNT')) {
+      return {
+        isTop: true,
+        isDescending: orderBy.includes('DESC'),
+      };
+    }
+  }
+  return { isTop: false, isDescending: false };
+}
+
 export function formatQueryResponse(
   query: ParsedQuery,
   transactions: readonly Transaction[],
@@ -179,6 +237,13 @@ export function formatQueryResponse(
   currency: string
 ): QueryFormatResult {
   let message: string;
+
+  // Check if this is a "top" query (most expensive, cheapest)
+  const { isTop, isDescending } = isTopQuery(query);
+  if (isTop && transactions.length > 0) {
+    message = formatTopResponse(query, transactions, currency, isDescending);
+    return { message, parseMode: 'Markdown' };
+  }
 
   switch (query.queryType) {
     case 'total':

@@ -1,42 +1,42 @@
-# FinTrack AI 架构改进方案
+# FinTrack AI Architecture Improvement Plan
 
-## 问题诊断
+## Problem Diagnosis
 
-### 1. Few-shot 语义不相关
+### 1. Few-shot Semantic Irrelevance
 ```
-用户输入: "tt 50"
-当前: 返回最近10条 (可能都是 uber, starbucks...)
-理想: 返回 "tt 45" → T&T Supermarket (语义相似)
-```
-
-### 2. 缺乏 Intent Router
-```
-用户: "这个月花了多少"
-当前: 尝试解析为 expense → 失败
-理想: 识别为 query intent → 调用 Query Tool
+User input: "tt 50"
+Current: Returns last 10 records (may be uber, starbucks...)
+Ideal: Returns "tt 45" → T&T Supermarket (semantically similar)
 ```
 
-### 3. 没有主动洞察
+### 2. Missing Intent Router
 ```
-用户: "咖啡 50"
-当前: 只记录
-理想: "这比你平时咖啡贵3倍，确认吗？"
+User: "how much this month"
+Current: Tries to parse as expense → fails
+Ideal: Recognize as query intent → call Query Tool
+```
+
+### 3. No Proactive Insights
+```
+User: "coffee 50"
+Current: Just records
+Ideal: "This is 3x your usual coffee price, confirm?"
 ```
 
 ---
 
-## Phase 1: 语义 Few-shot (RAG)
+## Phase 1: Semantic Few-shot (RAG)
 
-### 方案选择
+### Solution Comparison
 
-| 方案 | 优点 | 缺点 | 推荐度 |
-|------|------|------|--------|
-| Cloudflare Vectorize | 原生集成 | 需要 paid plan | ⭐⭐⭐ |
-| D1 + sqlite-vss | 免费 | 需要编译 extension | ⭐⭐ |
-| Embedding + 余弦相似度 | 简单 | 全量计算 | ⭐ |
-| OpenAI Embedding API | 最简单 | 每次调用有成本 | ⭐⭐⭐⭐ |
+| Solution | Pros | Cons | Rating |
+|----------|------|------|--------|
+| Cloudflare Vectorize | Native integration | Requires paid plan | ⭐⭐⭐ |
+| D1 + sqlite-vss | Free | Needs extension compilation | ⭐⭐ |
+| Embedding + Cosine similarity | Simple | Full calculation | ⭐ |
+| OpenAI Embedding API | Simplest | Per-call cost | ⭐⭐⭐⭐ |
 
-### 推荐: OpenAI Embedding + D1 存储
+### Recommended: OpenAI Embedding + D1 Storage
 
 ```sql
 -- migrations/006_add_embedding.sql
@@ -82,7 +82,7 @@ export async function getSimilarExamples(
   inputEmbedding: number[],
   limit: number = 5
 ): Promise<readonly HistoryExample[]> {
-  // 获取用户最近 100 条有 embedding 的记录
+  // Get user's last 100 records with embedding
   const result = await database.prepare(`
     SELECT raw_input, merchant, category, currency, input_embedding
     FROM transactions
@@ -94,7 +94,7 @@ export async function getSimilarExamples(
     LIMIT 100
   `).bind(userId).all();
 
-  // 计算相似度并排序
+  // Calculate similarity and sort
   const scored = result.results
     .map(row => ({
       input: row.raw_input as string,
@@ -113,7 +113,7 @@ export async function getSimilarExamples(
 }
 ```
 
-### 流程变更
+### Flow Changes
 
 ```
 Before:
@@ -127,13 +127,13 @@ After:
 
 ## Phase 2: Intent Router
 
-### 架构图
+### Architecture Diagram
 
 ```
 User Input
     ↓
 ┌─────────────────┐
-│  Intent Router  │ ← LLM 分类
+│  Intent Router  │ ← LLM classification
 └────────┬────────┘
          │
     ┌────┴────┬──────────┬──────────┐
@@ -143,17 +143,17 @@ User Input
  Parser   QueryTool  EditFlow   ChatHandler
 ```
 
-### Intent 定义
+### Intent Definition
 
 ```typescript
 // packages/core/src/intent.ts
 const IntentSchema = z.object({
   intent: z.enum(['record', 'query', 'modify', 'chat', 'help']),
   confidence: z.number().min(0).max(1),
-  // 可选: 提取的关键参数
+  // Optional: extracted key parameters
   params: z.object({
-    timeRange: z.string().optional(),  // "这个月", "上周"
-    category: z.string().optional(),   // "餐饮", "交通"
+    timeRange: z.string().optional(),  // "this month", "last week"
+    category: z.string().optional(),   // "dining", "transport"
     transactionId: z.string().optional(),
   }).optional(),
 });
@@ -161,20 +161,20 @@ const IntentSchema = z.object({
 const INTENT_PROMPT = `Classify user intent for an expense tracking app.
 
 Intents:
-- record: User wants to log a new expense (e.g., "午饭 30", "uber 15")
-- query: User wants to know spending stats (e.g., "这个月花了多少", "餐饮统计")
-- modify: User wants to change/delete existing record (e.g., "删掉上一笔", "改成50")
-- chat: General conversation or unclear (e.g., "你好", "谢谢")
-- help: User needs help (e.g., "怎么用", "帮助")
+- record: User wants to log a new expense (e.g., "lunch 30", "uber 15")
+- query: User wants to know spending stats (e.g., "how much this month", "dining stats")
+- modify: User wants to change/delete existing record (e.g., "delete last one", "change to 50")
+- chat: General conversation or unclear (e.g., "hello", "thanks")
+- help: User needs help (e.g., "how to use", "help")
 
 Examples:
 - "tt 50" → record
-- "本周餐饮多少" → query
-- "上一笔改成 30" → modify
-- "你好" → chat`;
+- "how much on dining this week" → query
+- "change last one to 30" → modify
+- "hello" → chat`;
 ```
 
-### Router 实现
+### Router Implementation
 
 ```typescript
 // packages/core/src/router.ts
@@ -204,7 +204,7 @@ export async function classifyIntent(
 }
 ```
 
-### Handler 路由
+### Handler Routing
 
 ```typescript
 // packages/telegram-bot/src/handlers/message.ts
@@ -230,7 +230,7 @@ async function processMessage(text: string, ...): Promise<void> {
 
 ## Phase 3: Query Tool
 
-### 自然语言查询
+### Natural Language Query
 
 ```typescript
 // packages/telegram-bot/src/handlers/query.ts
@@ -249,31 +249,31 @@ async function handleQueryIntent(
   params: IntentParams,
   environment: Environment
 ): Promise<void> {
-  // 让 LLM 解析查询参数
+  // Let LLM parse query parameters
   const query = await parseQuery(text, environment.OPENAI_API_KEY);
 
-  // 执行 SQL 查询
+  // Execute SQL query
   const result = await executeQuery(query, environment.DB);
 
-  // 格式化输出
+  // Format output
   const response = formatQueryResult(query, result);
   await sendMessage(chatId, response, ...);
 }
 ```
 
-### 查询示例
+### Query Examples
 
-| 输入 | 解析 | SQL |
-|------|------|-----|
-| "这个月花了多少" | {type: 'sum', timeRange: thisMonth} | `SELECT SUM(amount) FROM transactions WHERE created_at >= ?` |
-| "餐饮统计" | {type: 'sum', category: 'dining'} | `SELECT SUM(amount) FROM ... WHERE category = 'dining'` |
-| "上周每天消费" | {type: 'sum', groupBy: 'day'} | `SELECT date, SUM(amount) GROUP BY date` |
+| Input | Parsed | SQL |
+|-------|--------|-----|
+| "how much this month" | {type: 'sum', timeRange: thisMonth} | `SELECT SUM(amount) FROM transactions WHERE created_at >= ?` |
+| "dining stats" | {type: 'sum', category: 'dining'} | `SELECT SUM(amount) FROM ... WHERE category = 'dining'` |
+| "daily spending last week" | {type: 'sum', groupBy: 'day'} | `SELECT date, SUM(amount) GROUP BY date` |
 
 ---
 
 ## Phase 4: Proactive AI
 
-### 异常检测
+### Anomaly Detection
 
 ```typescript
 // packages/core/src/anomaly.ts
@@ -289,22 +289,22 @@ export async function detectAnomalies(
 ): Promise<readonly AnomalyCheck[]> {
   const anomalies: AnomalyCheck[] = [];
 
-  // 1. 金额异常 (超过该类别平均值 3 倍)
+  // 1. Amount anomaly (exceeds 3x category average)
   const categoryAvg = calculateCategoryAverage(history, transaction.category);
   if (transaction.amount > categoryAvg * 3) {
     anomalies.push({
       type: 'high_amount',
-      message: `这笔消费 ($${transaction.amount}) 比你平时${transaction.category}高很多`,
+      message: `This expense ($${transaction.amount}) is much higher than your usual ${transaction.category}`,
       severity: 'warning',
     });
   }
 
-  // 2. 首次商家
+  // 2. First-time merchant
   const knownMerchants = new Set(history.map(t => t.merchant.toLowerCase()));
   if (!knownMerchants.has(transaction.merchant.toLowerCase())) {
     anomalies.push({
       type: 'unusual_merchant',
-      message: `首次在 "${transaction.merchant}" 消费`,
+      message: `First time at "${transaction.merchant}"`,
       severity: 'info',
     });
   }
@@ -313,90 +313,90 @@ export async function detectAnomalies(
 }
 ```
 
-### 集成到确认流程
+### Integration into Confirmation Flow
 
 ```typescript
-// 在 processTransactionText 中
+// In processTransactionText
 const anomalies = await detectAnomalies(parsed, userHistory);
 
 if (anomalies.some(a => a.severity === 'warning')) {
-  // 显示警告并要求确认
+  // Display warning and require confirmation
   const warningSection = anomalies.map(a => `⚠️ ${a.message}`);
-  // 修改 keyboard 为需要明确确认
+  // Modify keyboard to require explicit confirmation
 }
 ```
 
 ---
 
-## Phase 5: 小模型优化
+## Phase 5: Small Model Optimization
 
-### OCR 降级
+### OCR Downgrade
 
 ```typescript
 // packages/telegram-bot/src/services/vision.ts
-// 修改模型为 gpt-4o-mini
-model: 'gpt-4o-mini',  // 从 gpt-4o 改为 mini
+// Change model to gpt-4o-mini
+model: 'gpt-4o-mini',  // Changed from gpt-4o to mini
 ```
 
-### 成本对比
+### Cost Comparison
 
-| 场景 | 当前 | 优化后 | 节省 |
-|------|------|--------|------|
-| Text parsing | gpt-4o-mini | 不变 | 0% |
+| Scenario | Current | Optimized | Savings |
+|----------|---------|-----------|---------|
+| Text parsing | gpt-4o-mini | No change | 0% |
 | OCR | gpt-4o | gpt-4o-mini | 90% |
-| Intent routing | - | gpt-4o-mini | 新增 |
-| Embedding | - | text-embedding-3-small | 新增 |
+| Intent routing | - | gpt-4o-mini | New |
+| Embedding | - | text-embedding-3-small | New |
 
 ---
 
-## 实施优先级
+## Implementation Priority
 
-| Phase | 内容 | 复杂度 | 价值 | 优先级 |
-|-------|------|--------|------|--------|
-| 1a | OCR 改用 gpt-4o-mini | 低 | 高 (省钱) | P0 |
-| 1b | 语义 Few-shot | 中 | 高 | P1 |
-| 2 | Intent Router | 中 | 高 | P1 |
-| 3 | Query Tool | 中 | 中 | P2 |
-| 4 | Proactive AI | 高 | 高 | P2 |
+| Phase | Content | Complexity | Value | Priority |
+|-------|---------|------------|-------|----------|
+| 1a | OCR use gpt-4o-mini | Low | High (cost) | P0 |
+| 1b | Semantic Few-shot | Medium | High | P1 |
+| 2 | Intent Router | Medium | High | P1 |
+| 3 | Query Tool | Medium | Medium | P2 |
+| 4 | Proactive AI | High | High | P2 |
 
 ---
 
-## 关键文件清单
+## Key Files List
 
 ```
 packages/core/src/
-├── embedding.ts         # 新建 - Embedding API
-├── router.ts            # 新建 - Intent Router
-├── anomaly.ts           # 新建 - 异常检测
+├── embedding.ts         # New - Embedding API
+├── router.ts            # New - Intent Router
+├── anomaly.ts           # New - Anomaly Detection
 
 packages/telegram-bot/
-├── migrations/006_add_embedding.sql  # 新建
-├── src/db/transactions.ts            # 添加 getSimilarExamples
-├── src/handlers/message.ts           # 添加 intent routing
-├── src/handlers/query.ts             # 新建 - Query handler
-└── src/services/vision.ts            # 改用 gpt-4o-mini
+├── migrations/006_add_embedding.sql  # New
+├── src/db/transactions.ts            # Add getSimilarExamples
+├── src/handlers/message.ts           # Add intent routing
+├── src/handlers/query.ts             # New - Query handler
+└── src/services/vision.ts            # Use gpt-4o-mini
 ```
 
 ---
 
-## 验证方式
+## Validation
 
-### Phase 1: 语义 Few-shot
+### Phase 1: Semantic Few-shot
 ```bash
-# 创建历史: "tt 45" → T&T Supermarket
-# 输入: "tt 50"
-# 期望: 推断出 T&T Supermarket (而非其他商家)
+# Create history: "tt 45" → T&T Supermarket
+# Input: "tt 50"
+# Expected: Infer T&T Supermarket (not other merchants)
 ```
 
 ### Phase 2: Intent Router
 ```bash
-# 输入: "这个月花了多少"
-# 期望: 返回统计结果, 而非解析失败
+# Input: "how much this month"
+# Expected: Returns stats result, not parse failure
 ```
 
 ### Phase 4: Proactive AI
 ```bash
-# 创建历史: 平均咖啡 $5
-# 输入: "咖啡 50"
-# 期望: 显示警告 "这比你平时咖啡贵10倍"
+# Create history: average coffee $5
+# Input: "coffee 50"
+# Expected: Shows warning "This is 10x your usual coffee price"
 ```

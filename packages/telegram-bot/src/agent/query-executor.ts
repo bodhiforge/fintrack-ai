@@ -56,6 +56,9 @@ function rowToTransaction(row: Readonly<Record<string, unknown>>): Transaction {
 function sanitizeSqlWhere(sqlWhere: string): string {
   let result = sqlWhere;
 
+  // Remove semicolons (prevents multiple statement injection)
+  result = result.replace(/;/g, '');
+
   // Remove ORDER BY and everything after it
   const orderByIndex = result.toUpperCase().indexOf('ORDER BY');
   if (orderByIndex !== -1) {
@@ -89,6 +92,9 @@ function sanitizeSqlOrderBy(sqlOrderBy: string | undefined): string {
   }
 
   let result = sqlOrderBy;
+
+  // Remove semicolons
+  result = result.replace(/;/g, '');
 
   // Remove LIMIT and everything after it
   const limitIndex = result.toUpperCase().indexOf('LIMIT');
