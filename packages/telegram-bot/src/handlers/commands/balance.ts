@@ -126,8 +126,13 @@ export async function handleSettle(context: CommandHandlerContext): Promise<void
   await sendMessage(chatId, message, environment.TELEGRAM_BOT_TOKEN, { parse_mode: 'Markdown' });
 }
 
-export async function handleHistory(context: CommandHandlerContext): Promise<void> {
+export async function handleHistory(
+  context: CommandHandlerContext,
+  page: number = 0
+): Promise<void> {
   const { chatId, project, environment } = context;
+  const pageSize = 10;
+  const offset = page * pageSize;
 
   if (project == null) {
     await sendMessage(
@@ -138,12 +143,19 @@ export async function handleHistory(context: CommandHandlerContext): Promise<voi
     return;
   }
 
+  // Get total count for pagination
+  const countResult = await environment.DB.prepare(`
+    SELECT COUNT(*) as total FROM transactions
+    WHERE project_id = ? AND status IN (?, ?)
+  `).bind(project.id, TransactionStatus.CONFIRMED, TransactionStatus.PERSONAL).first();
+  const total = (countResult?.total as number) ?? 0;
+
   const historyRows = await environment.DB.prepare(`
     SELECT * FROM transactions
     WHERE project_id = ? AND status IN (?, ?)
     ORDER BY created_at DESC
-    LIMIT 5
-  `).bind(project.id, TransactionStatus.CONFIRMED, TransactionStatus.PERSONAL).all();
+    LIMIT ? OFFSET ?
+  `).bind(project.id, TransactionStatus.CONFIRMED, TransactionStatus.PERSONAL, pageSize, offset).all();
 
   if (historyRows.results == null || historyRows.results.length === 0) {
     await sendMessage(
@@ -155,35 +167,43 @@ export async function handleHistory(context: CommandHandlerContext): Promise<voi
     return;
   }
 
-  // Build numbered list with edit buttons
+  // Store transaction IDs for this page in a simple mapping
+  const txIds = historyRows.results.map((row: Record<string, unknown>) => row.id as string);
+
+  // Build numbered list
   const historyLines = historyRows.results.map((row: Record<string, unknown>, index: number) => {
     const date = new Date(row.created_at as string).toLocaleDateString('en-CA');
     const status = row.status === TransactionStatus.PERSONAL ? '👤' : '✅';
-    return `${index + 1}. ${status} ${date} | ${row.merchant} | $${(row.amount as number).toFixed(2)}`;
+    const num = offset + index + 1;
+    return `${num}. ${status} ${date} | ${row.merchant} | $${(row.amount as number).toFixed(2)}`;
   });
 
-  // Create edit buttons (2 per row)
-  const editButtons = historyRows.results.map((row: Record<string, unknown>, index: number) => ({
-    text: `✏️ ${index + 1}`,
-    callback_data: `edit_${row.id as string}`,
-  }));
+  const hasMore = total > offset + pageSize;
+  const hasPrev = page > 0;
 
-  // Split into rows of 5
-  const buttonRows = [];
-  for (let i = 0; i < editButtons.length; i += 5) {
-    buttonRows.push(editButtons.slice(i, i + 5));
+  // Build buttons
+  const buttons: Array<{ text: string; callback_data: string }> = [];
+  if (hasPrev) {
+    buttons.push({ text: '⬅️ Prev', callback_data: `hist_${page - 1}` });
   }
+  buttons.push({ text: '✏️ Edit', callback_data: `hist_edit_${txIds.join(',')}` });
+  if (hasMore) {
+    buttons.push({ text: 'More ➡️', callback_data: `hist_${page + 1}` });
+  }
+
+  const pageInfo = total > pageSize ? `\n_Page ${page + 1} of ${Math.ceil(total / pageSize)}_` : '';
 
   const message = [
     `📜 *${project.name} History*`,
     '',
     ...historyLines,
+    pageInfo,
   ].join('\n');
 
   await sendMessage(chatId, message, environment.TELEGRAM_BOT_TOKEN, {
     parse_mode: 'Markdown',
     reply_markup: {
-      inline_keyboard: buttonRows,
+      inline_keyboard: [buttons],
     },
   });
 }
