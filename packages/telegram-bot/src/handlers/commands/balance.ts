@@ -179,7 +179,8 @@ export async function handleHistoryPage(
     const date = new Date(row.created_at as string).toLocaleDateString('en-CA');
     const status = row.status === TransactionStatus.PERSONAL ? '👤' : '✅';
     const num = offset + index + 1;
-    return `${num}. ${status} ${date} | ${row.merchant} | $${(row.amount as number).toFixed(2)}`;
+    const category = row.category as string;
+    return `${num}. ${status} ${date} | ${row.merchant} | ${category} | $${(row.amount as number).toFixed(2)}`;
   });
 
   const hasMore = total > offset + pageSize;
