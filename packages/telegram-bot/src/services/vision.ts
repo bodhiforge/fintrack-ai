@@ -1,8 +1,33 @@
 /**
  * OpenAI GPT-4o Vision Service for Receipt OCR
+ * Uses Structured Outputs for reliable parsing
  */
 
-const OPENAI_API_URL = 'https://api.openai.com/v1/chat/completions';
+import { z } from 'zod';
+import { zodResponseFormat } from 'openai/helpers/zod';
+import OpenAI from 'openai';
+
+// ============================================
+// Zod Schema
+// ============================================
+
+const ReceiptSchema = z.object({
+  merchant: z.string().describe('Store/business name (NOT address or transaction ID)'),
+  amount: z.number().describe('Total amount paid (after tax, tips, discounts)'),
+  currency: z.string().describe('Currency code: CAD, USD, EUR, etc.'),
+  date: z.string().describe('Transaction date in YYYY-MM-DD format'),
+  category: z.enum([
+    'dining', 'grocery', 'gas', 'shopping', 'subscription',
+    'travel', 'transport', 'entertainment', 'health', 'utilities',
+    'sports', 'education', 'other'
+  ]).describe('Expense category'),
+  items: z.array(z.string()).nullable().describe('2-5 main items if visible'),
+  confidence: z.object({
+    merchant: z.number().min(0).max(1).describe('Confidence for merchant extraction'),
+    amount: z.number().min(0).max(1).describe('Confidence for amount extraction'),
+    category: z.number().min(0).max(1).describe('Confidence for category classification'),
+  }).describe('Confidence scores (1.0=clear, 0.5=guessing, 0.1=very unclear)'),
+});
 
 // ============================================
 // Types
@@ -22,60 +47,37 @@ export interface ReceiptData {
   };
 }
 
-interface OpenAIResponse {
-  readonly choices: readonly {
-    readonly message: {
-      readonly content: string;
-    };
-  }[];
-}
-
 // ============================================
 // System Prompt
 // ============================================
 
-const SYSTEM_PROMPT = `You are analyzing a receipt or payment screenshot to extract transaction details.
-
-## Task
-Extract the merchant name, total amount, currency, date, category, and main items from the image.
+const SYSTEM_PROMPT = `You analyze receipt/payment images to extract transaction details.
 
 ## Guidelines
-- merchant: The store/business name (NOT the address or transaction ID)
-- amount: The TOTAL amount paid (after tax, tips, discounts)
-- currency: Infer from symbols ($, €, £) or country context. Default to CAD if unclear.
-- date: The transaction date in YYYY-MM-DD format. Default to today if not visible.
-- category: One of: dining, grocery, gas, shopping, subscription, travel, transport, entertainment, health, utilities, sports, education, other
-- items: List 2-5 main items if visible, omit if not clear
+- merchant: Store/business name (NOT address or transaction ID)
+- amount: TOTAL paid (after tax, tips, discounts). Look for "Total", "Grand Total", "Amount Due"
+- currency: Infer from $ (CAD/USD), €, £, ¥ or country context. Default CAD if unclear
+- date: Transaction date as YYYY-MM-DD. Use today ({today}) if not visible
+- category: Best matching category for the merchant type
+- items: List 2-5 main items if clearly visible, null if not
 
 ## Confidence Scoring (0-1)
-- 1.0: Text is perfectly clear and unambiguous
+- 1.0: Perfectly clear, unambiguous
 - 0.7-0.9: Slightly blurry but readable
-- 0.5-0.7: Had to make educated guesses
-- 0.3-0.5: Very unclear, low confidence
+- 0.5-0.7: Educated guesses needed
+- 0.3-0.5: Very unclear
 - 0.1-0.3: Mostly guessing
 
-## Response Format
-You MUST respond with valid JSON only. No markdown, no explanation.
-{
-  "merchant": "Store Name",
-  "amount": 25.99,
-  "currency": "CAD",
-  "date": "2024-01-15",
-  "category": "grocery",
-  "items": ["item1", "item2"],
-  "confidence": {
-    "merchant": 0.9,
-    "amount": 0.95,
-    "category": 0.8
-  }
-}`;
+## Multi-language Support
+Handle receipts in English, Chinese (中文), Japanese (日本語), Korean (한국어), French, Spanish.
+Extract merchant names in their original language or transliterate if needed.`;
 
 // ============================================
 // Vision Service
 // ============================================
 
 /**
- * Parse receipt image using GPT-4o Vision
+ * Parse receipt image using GPT-4o Vision with Structured Outputs
  */
 export async function parseReceipt(
   imageBase64: string,
@@ -83,65 +85,41 @@ export async function parseReceipt(
   mimeType: string = 'image/jpeg'
 ): Promise<ReceiptData> {
   const today = new Date().toISOString().split('T')[0];
+  const systemPrompt = SYSTEM_PROMPT.replace('{today}', today);
 
-  const response = await fetch(OPENAI_API_URL, {
-    method: 'POST',
-    headers: {
-      'Content-Type': 'application/json',
-      'Authorization': `Bearer ${apiKey}`,
-    },
-    body: JSON.stringify({
-      model: 'gpt-4o-mini',  // mini is sufficient for OCR, 90% cost reduction
-      messages: [
-        { role: 'system', content: SYSTEM_PROMPT },
-        {
-          role: 'user',
-          content: [
-            {
-              type: 'text',
-              text: `Today's date: ${today}\n\nPlease extract the transaction details from this receipt image.`,
+  const client = new OpenAI({ apiKey });
+
+  const completion = await client.beta.chat.completions.parse({
+    model: 'gpt-4o-mini',
+    messages: [
+      { role: 'system', content: systemPrompt },
+      {
+        role: 'user',
+        content: [
+          {
+            type: 'text',
+            text: `Today: ${today}\n\nExtract transaction details from this receipt.`,
+          },
+          {
+            type: 'image_url',
+            image_url: {
+              url: `data:${mimeType};base64,${imageBase64}`,
+              detail: 'high',
             },
-            {
-              type: 'image_url',
-              image_url: {
-                url: `data:${mimeType};base64,${imageBase64}`,
-                detail: 'high',
-              },
-            },
-          ],
-        },
-      ],
-      temperature: 0,
-      max_tokens: 1000,
-    }),
+          },
+        ],
+      },
+    ],
+    response_format: zodResponseFormat(ReceiptSchema, 'receipt'),
+    temperature: 0,
+    max_tokens: 1000,
   });
 
-  if (!response.ok) {
-    const error = await response.text();
-    throw new Error(`Vision API error: ${response.status} - ${error}`);
+  const parsed = completion.choices[0]?.message?.parsed;
+
+  if (parsed == null) {
+    throw new Error('Failed to parse receipt: no structured output returned');
   }
-
-  const result = await response.json() as OpenAIResponse;
-  const content = result.choices[0]?.message?.content;
-
-  if (content == null) {
-    throw new Error('Failed to parse receipt from image');
-  }
-
-  // Parse JSON response
-  const parsed = JSON.parse(content) as {
-    merchant: string;
-    amount: number;
-    currency: string;
-    date: string;
-    category: string;
-    items?: string[];
-    confidence: {
-      merchant: number;
-      amount: number;
-      category: number;
-    };
-  };
 
   return {
     merchant: parsed.merchant,
@@ -149,7 +127,7 @@ export async function parseReceipt(
     currency: parsed.currency.toUpperCase(),
     date: parsed.date,
     category: parsed.category.toLowerCase(),
-    items: parsed.items,
+    items: parsed.items ?? undefined,
     confidence: parsed.confidence,
   };
 }

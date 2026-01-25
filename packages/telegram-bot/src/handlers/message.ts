@@ -96,7 +96,7 @@ export async function handleVoiceMessage(
 
   try {
     // Download audio from Telegram
-    const audioBlob = await downloadTelegramFile(
+    const { blob: audioBlob } = await downloadTelegramFile(
       message.voice.file_id,
       environment.TELEGRAM_BOT_TOKEN
     );
@@ -187,7 +187,7 @@ export async function handlePhotoMessage(
 
   try {
     // Download image from Telegram
-    const imageBlob = await downloadTelegramFile(
+    const { blob: imageBlob, mimeType } = await downloadTelegramFile(
       largestPhoto.file_id,
       environment.TELEGRAM_BOT_TOKEN
     );
@@ -199,7 +199,7 @@ export async function handlePhotoMessage(
     const receiptData = await parseReceipt(
       imageBase64,
       environment.OPENAI_API_KEY,
-      imageBlob.type ?? 'image/jpeg'
+      mimeType
     );
 
     // Process as transaction
