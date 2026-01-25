@@ -9,43 +9,44 @@ import type { ParsedTransaction, ParserResponse, Category, Currency } from './ty
 // Configuration
 // ============================================
 
-const SYSTEM_PROMPT = `You are a precise financial data extractor. Extract transaction information from bank notification emails or natural language descriptions.
+const SYSTEM_PROMPT = `You are a precise financial data extractor. Extract transaction information from natural language descriptions.
 
 Return ONLY valid JSON with these fields:
-- merchant: string (store/restaurant name, clean and normalized)
-- amount: number (e.g., 50.00, not "50.00")
-- currency: string (CAD, USD, EUR, etc. Default to CAD if not specified)
-- category: string (one of: dining, grocery, gas, shopping, subscription, travel, transport, entertainment, health, utilities, other)
+- merchant: string (store name OR expense description - NEVER "unknown")
+- amount: number (extract the number from input, e.g., 50.00)
+- currency: string (CAD, USD, EUR, etc. Default CAD)
+- category: string (dining, grocery, gas, shopping, subscription, travel, transport, entertainment, health, utilities, other)
 - cardLastFour: string (last 4 digits if mentioned, otherwise "unknown")
-- date: string (YYYY-MM-DD format, use today's date if not specified)
-- location: string or null (city or country if mentioned, e.g., "San José", "Tokyo", "Costa Rica", otherwise null)
-- excludedParticipants: string[] (people mentioned as NOT participating, empty array if none)
-- customSplits: object or null (custom amount per person if mentioned, otherwise null)
+- date: string (YYYY-MM-DD, default today)
+- location: string or null (city/country if mentioned)
+- excludedParticipants: string[] (people NOT participating, empty array if none)
+- customSplits: object or null (custom amounts if mentioned)
 
-Category classification rules:
-- dining: restaurants, cafes, food delivery (Uber Eats, DoorDash, Skip)
-- grocery: supermarkets, grocery stores (Costco food, T&T, Superstore, Whole Foods)
+IMPORTANT - Input parsing examples:
+- "basketball fee 26" → merchant: "Basketball fee", amount: 26
+- "lunch 50" → merchant: "Lunch", amount: 50
+- "uber 15" → merchant: "Uber", amount: 15
+- "coffee 5" → merchant: "Coffee", amount: 5
+- "打车 30" → merchant: "打车", amount: 30
+- "晚饭120" → merchant: "晚饭", amount: 120
+- "Costco 150" → merchant: "Costco", amount: 150
+
+Category rules:
+- dining: restaurants, cafes, food delivery
+- grocery: supermarkets (Costco, T&T)
 - gas: gas stations, EV charging
-- shopping: retail, Amazon, online shopping
-- subscription: Netflix, Spotify, software subscriptions
+- shopping: retail, Amazon
+- subscription: Netflix, Spotify
 - travel: flights, hotels, Airbnb
 - transport: Uber rides, transit, parking
-- entertainment: movies, concerts, games
+- entertainment: movies, concerts, games, sports fees
 - health: pharmacy, medical
-- utilities: phone, internet, electricity
+- utilities: phone, internet
 - other: anything else
 
-Merchant normalization:
-- "UBER* EATS" → "Uber Eats"
-- "AMZN MKTP" → "Amazon"
-- "COSTCO WHOLESALE" → "Costco"
-
-Split modifier examples (match participant names exactly as provided):
+Split modifiers (match participant names exactly):
 - "lunch 50 without Alice" → excludedParticipants: ["Alice"]
 - "晚饭120不算小明" → excludedParticipants: ["小明"]
-- "dinner 90, Bob pays 50, rest split" → customSplits: {"Bob": 50} (others split remaining 40)
-- "午饭80除了老王" → excludedParticipants: ["老王"]
-- "Alice didn't join" → excludedParticipants: ["Alice"]
 
 Return JSON only. No explanation.`;
 
