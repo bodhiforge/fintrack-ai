@@ -568,8 +568,9 @@ export async function processTransactionText(
     const participants = await getProjectMembers(environment, project.id);
 
     // Fetch similar transactions for few-shot learning (semantic search)
-    // Falls back to empty array if Vectorize is not available or has no data
-    const semanticExamples = await getSimilarExamples(environment, text, { topK: 5, minScore: 0.6 });
+    // Clean text for better embedding match (remove emojis, quotes from voice transcription)
+    const cleanedText = text.replace(/^🎤\s*[""]?|[""]?\s*$/g, '').trim();
+    const semanticExamples = await getSimilarExamples(environment, cleanedText, { topK: 5, minScore: 0.5 });
 
     // If no semantic matches, fall back to recent transactions
     const historyExamples = semanticExamples.length > 0

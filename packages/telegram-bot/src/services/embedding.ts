@@ -111,6 +111,11 @@ export class EmbeddingService {
       returnMetadata: 'all',
     });
 
+    console.log(`[Embedding] Query: "${query}", found ${results.matches.length} matches`);
+    results.matches.slice(0, 3).forEach(match => {
+      console.log(`[Embedding]   - ${match.id}: score=${match.score.toFixed(3)}, merchant=${match.metadata?.merchant}`);
+    });
+
     return results.matches
       .filter(match => match.score >= minScore)
       .map(match => ({
