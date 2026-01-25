@@ -161,8 +161,16 @@ export class TransactionParser {
       ? parsed.customSplits
       : undefined;
 
+    // Normalize merchant - reject "unknown" variants
+    const rawMerchant = parsed.merchant?.trim() ?? '';
+    const isUnknownMerchant = rawMerchant === '' || rawMerchant.toLowerCase() === 'unknown';
+    const category = this.normalizeCategory(parsed.category);
+    const merchant = isUnknownMerchant
+      ? this.categoryToMerchant(category)
+      : rawMerchant;
+
     return {
-      merchant: parsed.merchant ?? 'Unknown',
+      merchant,
       amount: typeof parsed.amount === 'number' ? parsed.amount : parseFloat(String(parsed.amount)) || 0,
       currency: this.normalizeCurrency(parsed.currency),
       category: this.normalizeCategory(parsed.category),
@@ -172,6 +180,26 @@ export class TransactionParser {
       excludedParticipants: excludedParticipants != null && excludedParticipants.length > 0 ? excludedParticipants : undefined,
       customSplits,
     };
+  }
+
+  /**
+   * Convert category to a readable merchant name when merchant is unknown
+   */
+  private categoryToMerchant(category: Category): string {
+    const categoryNames: Record<Category, string> = {
+      dining: 'Restaurant',
+      grocery: 'Grocery',
+      gas: 'Gas Station',
+      shopping: 'Shopping',
+      subscription: 'Subscription',
+      travel: 'Travel',
+      transport: 'Transport',
+      entertainment: 'Entertainment',
+      health: 'Health',
+      utilities: 'Utilities',
+      other: 'Expense',
+    };
+    return categoryNames[category] ?? 'Expense';
   }
 
   /**
@@ -216,10 +244,17 @@ export class TransactionParser {
    * Check for potential issues
    */
   private checkWarnings(parsed: ParsedTransaction, _originalInput: string): readonly string[] {
+    // Default merchant names (when merchant couldn't be identified)
+    const defaultMerchants = [
+      'Restaurant', 'Grocery', 'Gas Station', 'Shopping', 'Subscription',
+      'Travel', 'Transport', 'Entertainment', 'Health', 'Utilities', 'Expense',
+    ];
+    const isDefaultMerchant = defaultMerchants.includes(parsed.merchant);
+
     const warningChecks: ReadonlyArray<{ condition: boolean; message: string }> = [
       { condition: parsed.amount <= 0, message: 'Amount is zero or negative' },
       { condition: parsed.amount > 10000, message: 'Unusually large amount - please verify' },
-      { condition: parsed.merchant === 'Unknown', message: 'Could not identify merchant' },
+      { condition: isDefaultMerchant, message: 'Merchant name not detected' },
       { condition: parsed.cardLastFour === 'unknown', message: 'Card number not detected' },
     ];
 
