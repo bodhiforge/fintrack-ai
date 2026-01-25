@@ -5,6 +5,7 @@
 import type { CallbackQuery, Environment } from '../../types.js';
 import { sendMessage, editMessageText, deleteMessage } from '../../telegram/api.js';
 import { TransactionStatus } from '../../constants.js';
+import { EmbeddingService } from '../../services/embedding.js';
 
 export async function handleTransactionCallbacks(
   query: CallbackQuery,
@@ -22,6 +23,9 @@ export async function handleTransactionCallbacks(
         UPDATE transactions SET status = ?, confirmed_at = ? WHERE id = ?
       `).bind(TransactionStatus.CONFIRMED, new Date().toISOString(), transactionId).run();
 
+      // Store embedding for semantic search
+      await storeTransactionEmbedding(transactionId, environment);
+
       await editMessageText(
         chatId,
         messageId,
@@ -37,6 +41,9 @@ export async function handleTransactionCallbacks(
         UPDATE transactions SET status = ?, is_shared = 0, splits = NULL, confirmed_at = ? WHERE id = ?
       `).bind(TransactionStatus.PERSONAL, new Date().toISOString(), transactionId).run();
 
+      // Store embedding for semantic search
+      await storeTransactionEmbedding(transactionId, environment);
+
       await editMessageText(
         chatId,
         messageId,
@@ -51,6 +58,9 @@ export async function handleTransactionCallbacks(
       await environment.DB.prepare(`
         UPDATE transactions SET status = ? WHERE id = ?
       `).bind(TransactionStatus.DELETED, transactionId).run();
+
+      // Delete embedding
+      await deleteTransactionEmbedding(transactionId, environment);
 
       await deleteMessage(chatId, messageId, environment.TELEGRAM_BOT_TOKEN);
       break;
@@ -80,5 +90,52 @@ export async function handleTransactionCallbacks(
       );
       break;
     }
+  }
+}
+
+// ============================================
+// Embedding Helpers
+// ============================================
+
+async function storeTransactionEmbedding(
+  transactionId: string,
+  environment: Environment
+): Promise<void> {
+  try {
+    // Fetch transaction data
+    const row = await environment.DB.prepare(`
+      SELECT id, merchant, amount, category, currency, location
+      FROM transactions WHERE id = ?
+    `).bind(transactionId).first();
+
+    if (row == null) {
+      console.error(`[Embedding] Transaction not found: ${transactionId}`);
+      return;
+    }
+
+    const embeddingService = new EmbeddingService(environment);
+    await embeddingService.storeTransaction({
+      id: row.id as string,
+      merchant: row.merchant as string,
+      amount: row.amount as number,
+      category: row.category as string,
+      currency: row.currency as string,
+      location: row.location as string | undefined,
+    });
+  } catch (error) {
+    // Don't fail the confirmation if embedding fails
+    console.error('[Embedding] Failed to store embedding:', error);
+  }
+}
+
+async function deleteTransactionEmbedding(
+  transactionId: string,
+  environment: Environment
+): Promise<void> {
+  try {
+    const embeddingService = new EmbeddingService(environment);
+    await embeddingService.deleteTransaction(transactionId);
+  } catch (error) {
+    console.error('[Embedding] Failed to delete embedding:', error);
   }
 }

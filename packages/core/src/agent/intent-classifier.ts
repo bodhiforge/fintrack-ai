@@ -15,7 +15,7 @@ import type { Intent, IntentResult, IntentEntities, TimeRange } from './types.js
 const TimeRangeSchema = z.object({
   start: z.string().describe('Start date in YYYY-MM-DD format'),
   end: z.string().describe('End date in YYYY-MM-DD format'),
-  label: z.string().optional().describe('Human-readable label like "this month"'),
+  label: z.string().nullable().describe('Human-readable label like "this month"'),
 });
 
 const IntentSchema = z.object({
@@ -23,28 +23,28 @@ const IntentSchema = z.object({
   confidence: z.number().min(0).max(1).describe('Confidence score 0-1'),
   entities: z.object({
     // Query entities
-    queryType: z.enum(['balance', 'history', 'total', 'breakdown', 'settlement']).optional()
+    queryType: z.enum(['balance', 'history', 'total', 'breakdown', 'settlement']).nullable()
       .describe('Type of query'),
-    timeRange: TimeRangeSchema.optional()
+    timeRange: TimeRangeSchema.nullable()
       .describe('Time range for query'),
-    categoryFilter: z.string().optional()
+    categoryFilter: z.string().nullable()
       .describe('Category to filter by (lowercase)'),
-    personFilter: z.string().optional()
+    personFilter: z.string().nullable()
       .describe('Person to filter by'),
-    limit: z.number().optional()
+    limit: z.number().nullable()
       .describe('Max results for history query'),
-    sqlWhere: z.string().optional()
+    sqlWhere: z.string().nullable()
       .describe('SQL WHERE clause for query intent (without WHERE keyword)'),
-    sqlOrderBy: z.string().optional()
+    sqlOrderBy: z.string().nullable()
       .describe('SQL ORDER BY clause (without ORDER BY keyword)'),
     // Modify entities
-    modifyAction: z.enum(['edit', 'delete', 'undo']).optional()
+    modifyAction: z.enum(['edit', 'delete', 'undo']).nullable()
       .describe('Type of modification'),
-    targetField: z.enum(['amount', 'merchant', 'category', 'split']).optional()
+    targetField: z.enum(['amount', 'merchant', 'category', 'split']).nullable()
       .describe('Field to modify'),
-    newValue: z.union([z.string(), z.number()]).optional()
+    newValue: z.union([z.string(), z.number()]).nullable()
       .describe('New value for the field'),
-    targetReference: z.string().optional()
+    targetReference: z.string().nullable()
       .describe('"last" for most recent, or transaction ID'),
   }),
 });
@@ -180,18 +180,23 @@ export class IntentClassifier {
   }
 
   private normalizeEntities(entities: z.infer<typeof IntentSchema>['entities']): IntentEntities {
+    // Convert null to undefined for all nullable fields
     return {
-      queryType: entities.queryType,
-      timeRange: entities.timeRange as TimeRange | undefined,
-      categoryFilter: entities.categoryFilter?.toLowerCase(),
-      personFilter: entities.personFilter,
-      limit: entities.limit,
-      sqlWhere: entities.sqlWhere,
-      sqlOrderBy: entities.sqlOrderBy,
-      modifyAction: entities.modifyAction,
-      targetField: entities.targetField,
-      newValue: entities.newValue,
-      targetReference: entities.targetReference,
+      queryType: entities.queryType ?? undefined,
+      timeRange: entities.timeRange != null ? {
+        start: entities.timeRange.start,
+        end: entities.timeRange.end,
+        label: entities.timeRange.label ?? undefined,
+      } : undefined,
+      categoryFilter: entities.categoryFilter?.toLowerCase() ?? undefined,
+      personFilter: entities.personFilter ?? undefined,
+      limit: entities.limit ?? undefined,
+      sqlWhere: entities.sqlWhere ?? undefined,
+      sqlOrderBy: entities.sqlOrderBy ?? undefined,
+      modifyAction: entities.modifyAction ?? undefined,
+      targetField: entities.targetField ?? undefined,
+      newValue: entities.newValue ?? undefined,
+      targetReference: entities.targetReference ?? undefined,
     };
   }
 

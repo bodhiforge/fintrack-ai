@@ -3,6 +3,8 @@
  */
 
 import type { Transaction, Category, Currency } from '@fintrack-ai/core';
+import type { Environment } from '../types.js';
+import { EmbeddingService, type SimilarTransaction } from '../services/embedding.js';
 
 // ============================================
 // Types
@@ -41,6 +43,39 @@ export async function getRecentExamples(
     category: row.category as string,
     currency: row.currency as string,
   }));
+}
+
+// ============================================
+// Semantic Search for Few-shot Learning
+// ============================================
+
+/**
+ * Get similar transactions using embedding-based semantic search
+ */
+export async function getSimilarExamples(
+  environment: Environment,
+  query: string,
+  options?: { readonly topK?: number; readonly minScore?: number }
+): Promise<readonly HistoryExample[]> {
+  try {
+    const embeddingService = new EmbeddingService(environment);
+    const similar = await embeddingService.findSimilar(query, {
+      topK: options?.topK ?? 5,
+      minScore: options?.minScore ?? 0.7,
+    });
+
+    // Convert SimilarTransaction to HistoryExample format
+    return similar.map(transaction => ({
+      input: `${transaction.merchant} ${transaction.amount}`,
+      merchant: transaction.merchant,
+      category: transaction.category,
+      currency: transaction.currency,
+    }));
+  } catch (error) {
+    console.error('[Embedding] Failed to get similar examples:', error);
+    // Fallback to empty array if embedding search fails
+    return [];
+  }
 }
 
 // ============================================

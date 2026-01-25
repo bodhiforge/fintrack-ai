@@ -15,3 +15,7 @@ ENVIRONMENT = "production"
 binding = "DB"
 database_name = "fintrack-db"
 database_id = "9a0fba96-41c9-4be3-ab97-14bfa6f3777a"
+
+[[vectorize]]
+binding = "VECTORIZE"
+index_name = "fintrack-transactions"
