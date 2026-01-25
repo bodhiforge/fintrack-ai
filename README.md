@@ -1,7 +1,7 @@
 # FinTrack AI
 
-> Proactive expense tracking powered by AI.
-> Don't log expenses — let AI detect and confirm them for you.
+> AI-powered expense tracking with natural language understanding.
+> Just tell it what you spent — it handles the rest.
 
 ## The Problem
 
@@ -15,67 +15,51 @@ This friction means most people give up after a week.
 
 ## The Solution
 
-**FinTrack AI flips the model**:
+**FinTrack AI understands your intent**:
 
 ```
-Bank sends email → AI parses it → You tap to confirm (1 second)
+You: "coffee 5"           → Logs expense
+You: "how much this month" → Shows spending summary
+You: "delete the last one" → Removes last transaction
 ```
 
 For travel with friends:
 ```
 You: "dinner 50 USD in Tokyo, Alice didn't join"
-AI: "Got it. $50 split between you and Bob. Alice excluded.
-     ✅ Use Amex Cobalt - Earn 250 pts (~$5)
-     🛡️ Don't forget: Mobile Device Insurance
-     ✓ Confirm?"
+AI: "Got it. $50 split between you and Bob. Alice excluded. ✓ Confirm?"
 ```
 
 ## Features
 
 | Feature | Status | Description |
 |---------|--------|-------------|
+| **Intent Classification** | ✅ | Understands record/query/modify/chat via single LLM call |
+| **Natural Language Query** | ✅ | "how much on dining this month" → spending summary |
+| **Natural Language Modify** | ✅ | "delete the last one" → removes transaction |
 | **AI Parsing** | ✅ | Natural language → structured transaction via GPT-4o-mini |
 | **Multi-Project** | ✅ | Separate expenses by trip/event with invite codes |
 | **Smart Splitting** | ✅ | "dinner 50, exclude Alice" → auto-split |
 | **Multi-Currency** | ✅ | Per-project currency, grouped balance/settle |
 | **Location Tracking** | ✅ | AI extracts location or uses project default |
-| **Card Recommendation** | ✅ | Shows best card per transaction + relevant benefits |
-| **Card Management** | ✅ | Add/remove cards, browse by category |
+| **Voice Input** | ✅ | Send voice message → Whisper transcription → parse |
 | **One-Tap Confirm** | ✅ | Telegram inline keyboards, not forms |
 | **Transaction Edit** | ✅ | Edit amount, merchant, category, split inline |
 | **Debt Simplification** | ✅ | Minimizes end-of-trip transactions |
-| **Gmail Integration** | 🚧 | Auto-parse bank email notifications |
-| **Card Referrals** | 🔜 | Recommend new cards with affiliate links |
+| **Low-Confidence Dialog** | ✅ | Asks for clarification when unsure |
+| **Receipt OCR** | 🚧 | Photo → GPT-4o Vision → parse |
+| **Gmail Integration** | 🔜 | Auto-parse bank email notifications |
 
-## Card Strategy System
+## Natural Language Examples
 
-The card recommendation engine helps maximize credit card rewards:
-
-```
-💳 New Transaction
-📁 Costa Rica Trip
-📍 Restaurant La Casona (San José)
-💰 $50.00 USD
-
-✅ Use Amex Cobalt
-💰 Earn 250 pts (~$5.00)
-
-🎁 Benefits with this card:
-  🛡️ Mobile Device Insurance
-  💵 Monthly Uber Credit
-
-💡 Consider Rogers WE MC for foreign transactions (no FX fee)
-```
-
-### Preset Cards (Canada)
-
-| Card | Best For | Key Benefit |
-|------|----------|-------------|
-| Amex Cobalt | Dining, Grocery (5x) | Uber credit, phone insurance |
-| Amex Gold | Travel (2x) | Lounge access, travel insurance |
-| TD Aeroplan VI | Flights (3x) | Free checked bag, delay insurance |
-| Rogers WE MC | Foreign (No FX) | 4% cashback on USD |
-| Tangerine MC | Custom 2% | No annual fee |
+| Input | Intent | Result |
+|-------|--------|--------|
+| `coffee 5` | record | Logs $5 coffee expense |
+| `lunch 30 without Bob` | record | Logs $30, excludes Bob from split |
+| `how much this month` | query | Shows total spending this month |
+| `spending by category` | query | Shows breakdown by category |
+| `delete the last one` | modify | Deletes most recent transaction |
+| `change to 50` | modify | Updates last transaction to $50 |
+| `hi` | chat | Shows welcome message |
 
 ## Bot Commands
 
@@ -116,14 +100,24 @@ curl https://your-worker.workers.dev/setup-webhook
 
 ```
 ┌─────────────────────────────────────────────────────────────┐
-│                    Processing Layer                         │
+│                      Telegram Input                          │
+│              Text / Voice / Photo / Location                 │
+└─────────────────────────┬───────────────────────────────────┘
+                          │
+                          ▼
+┌─────────────────────────────────────────────────────────────┐
+│                   Agent Orchestrator                         │
 │  ┌────────────────────────────────────────────────────┐    │
-│  │              Cloudflare Workers (Edge)              │    │
-│  │  ┌─────────┐  ┌─────────┐  ┌─────────────────┐    │    │
-│  │  │ Parser  │  │Splitter │  │ Card Recommender│    │    │
-│  │  │  (AI)   │  │  (Algo) │  │    Engine       │    │    │
-│  │  └─────────┘  └─────────┘  └─────────────────┘    │    │
+│  │           IntentClassifier (gpt-4o-mini)            │    │
+│  │     Structured Outputs → intent + entities + SQL    │    │
 │  └────────────────────────────────────────────────────┘    │
+│                          │                                   │
+│         ┌────────────────┼────────────────┐                 │
+│         ▼                ▼                ▼                 │
+│  ┌────────────┐  ┌────────────┐  ┌────────────┐            │
+│  │   record   │  │   query    │  │   modify   │            │
+│  │  → Parser  │  │ → D1 Query │  │ → Edit/Del │            │
+│  └────────────┘  └────────────┘  └────────────┘            │
 └─────────────────────────┬───────────────────────────────────┘
                           │
                           ▼
@@ -131,7 +125,7 @@ curl https://your-worker.workers.dev/setup-webhook
 │                    Storage Layer                            │
 │  ┌──────────────────────────────────────────────────┐      │
 │  │              Cloudflare D1 (SQLite)               │      │
-│  │  users | projects | transactions | user_cards     │      │
+│  │  users | projects | transactions | sessions       │      │
 │  └──────────────────────────────────────────────────┘      │
 └─────────────────────────────────────────────────────────────┘
 ```
@@ -141,23 +135,29 @@ curl https://your-worker.workers.dev/setup-webhook
 ```
 packages/
 ├── core/                     # Shared business logic
+│   ├── agent/                # Agent system
+│   │   ├── intent-classifier.ts  # LLM intent + SQL generation
+│   │   ├── query-parser.ts       # (deprecated, merged into classifier)
+│   │   └── types.ts              # Agent type definitions
 │   ├── parser.ts             # AI transaction parsing
 │   ├── splitter.ts           # Expense splitting & debt simplification
-│   ├── cards.ts              # Credit card data model & presets
-│   ├── cardRecommender.ts    # Recommendation algorithm
-│   ├── constants.ts          # Shared constants
 │   └── types.ts              # TypeScript types
 ├── telegram-bot/             # Telegram bot worker
 │   └── src/
 │       ├── index.ts          # Entry point (HTTP routing)
-│       ├── types.ts          # Telegram-specific types
-│       ├── constants.ts      # Bot constants
+│       ├── agent/            # Agent orchestration
+│       │   ├── index.ts          # Main entry point (processWithAgent)
+│       │   ├── query-executor.ts # D1 query execution
+│       │   ├── response-formatter.ts # Format query results
+│       │   └── session.ts        # Multi-turn conversation state
 │       ├── handlers/         # Request handlers
-│       │   ├── commands/     # /menu, /balance, /cards, etc.
+│       │   ├── commands/     # /menu, /balance, /history, etc.
 │       │   └── callbacks/    # Inline button handlers
+│       ├── services/         # External services
+│       │   ├── whisper.ts        # Voice transcription
+│       │   └── vision.ts         # Receipt OCR (WIP)
 │       ├── db/               # Database helpers
-│       ├── telegram/         # Telegram API helpers
-│       └── utils/            # Utilities (invite codes, location)
+│       └── telegram/         # Telegram API helpers
 └── gmail-worker/             # Gmail webhook processor (WIP)
 ```
 
@@ -165,20 +165,21 @@ packages/
 
 - [x] **Phase 1: MVP** - AI parsing, splitting, multi-project
 - [x] **Phase 2: Card Strategy** - Recommend best card, show benefits
-- [x] **Phase 2.5: Code Quality** - Modular architecture, immutability
-- [ ] **Phase 3: Card Referrals** - Suggest new cards with affiliate links
-- [ ] **Phase 4: Gmail Integration** - Auto-parse bank emails
-- [ ] **Phase 5: Benefit Reminders** - Monthly perk notifications
+- [x] **Phase 3: Agent Architecture** - Intent classification, natural language queries
+- [x] **Phase 3.5: Voice Input** - Whisper transcription support
+- [ ] **Phase 4: Receipt OCR** - Photo → GPT-4o Vision → parse
+- [ ] **Phase 5: Gmail Integration** - Auto-parse bank emails
+- [ ] **Phase 6: Proactive Insights** - Spending alerts, monthly summaries
 
 ## Recent Commits
 
 | Commit | Description |
 |--------|-------------|
-| `1301612` | refactor: full codebase cleanup per Hawking standards |
-| `a8720aa` | feat: add Telegram location sharing support |
-| `81b4d16` | feat: add location-based foreign currency detection |
-| `c42c1ea` | fix: P0/P1 issues - Costco detection, remove old strategy |
-| `a008f45` | feat: add credit card recommendation system |
+| `bda4088` | feat: add low-confidence intent clarification dialog |
+| `706ded9` | perf: merge IntentClassifier and QueryParser into single LLM call |
+| `27db182` | feat: add Agent architecture with intent routing and query tools |
+| `ec984a5` | feat: add custom category input with /editcat command |
+| `3342388` | refactor: change default UI language from Chinese to English |
 
 ## License
 
