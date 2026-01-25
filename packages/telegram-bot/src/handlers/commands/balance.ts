@@ -142,7 +142,7 @@ export async function handleHistory(context: CommandHandlerContext): Promise<voi
     SELECT * FROM transactions
     WHERE project_id = ? AND status IN (?, ?)
     ORDER BY created_at DESC
-    LIMIT 10
+    LIMIT 5
   `).bind(project.id, TransactionStatus.CONFIRMED, TransactionStatus.PERSONAL).all();
 
   if (historyRows.results == null || historyRows.results.length === 0) {
@@ -155,11 +155,24 @@ export async function handleHistory(context: CommandHandlerContext): Promise<voi
     return;
   }
 
-  const historyLines = historyRows.results.map((row: Record<string, unknown>) => {
+  // Build numbered list with edit buttons
+  const historyLines = historyRows.results.map((row: Record<string, unknown>, index: number) => {
     const date = new Date(row.created_at as string).toLocaleDateString('en-CA');
     const status = row.status === TransactionStatus.PERSONAL ? '👤' : '✅';
-    return `${status} ${date} | ${row.merchant} | $${(row.amount as number).toFixed(2)}`;
+    return `${index + 1}. ${status} ${date} | ${row.merchant} | $${(row.amount as number).toFixed(2)}`;
   });
+
+  // Create edit buttons (2 per row)
+  const editButtons = historyRows.results.map((row: Record<string, unknown>, index: number) => ({
+    text: `✏️ ${index + 1}`,
+    callback_data: `edit_${row.id as string}`,
+  }));
+
+  // Split into rows of 5
+  const buttonRows = [];
+  for (let i = 0; i < editButtons.length; i += 5) {
+    buttonRows.push(editButtons.slice(i, i + 5));
+  }
 
   const message = [
     `📜 *${project.name} History*`,
@@ -167,7 +180,12 @@ export async function handleHistory(context: CommandHandlerContext): Promise<voi
     ...historyLines,
   ].join('\n');
 
-  await sendMessage(chatId, message, environment.TELEGRAM_BOT_TOKEN, { parse_mode: 'Markdown' });
+  await sendMessage(chatId, message, environment.TELEGRAM_BOT_TOKEN, {
+    parse_mode: 'Markdown',
+    reply_markup: {
+      inline_keyboard: buttonRows,
+    },
+  });
 }
 
 export async function handleUndo(context: CommandHandlerContext): Promise<void> {
