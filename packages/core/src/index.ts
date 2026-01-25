@@ -22,7 +22,6 @@ export {
   calculateBalances,
   simplifyDebts,
   formatSettlements,
-  parseNaturalLanguageSplit,
   convertCurrency,
   DEFAULT_RATES,
 } from './splitter.js';
@@ -33,9 +32,13 @@ export {
   recommendCard,
   detectForeignByLocation,
   formatRecommendation,
+  formatRecommendationWithValue,
   formatBenefits,
   formatCardSuggestion,
   type UserCardWithDetails,
   type RecommendationResult,
   type CardSuggestion,
 } from './cardRecommender.js';
+
+// Agent
+export * from './agent/index.js';

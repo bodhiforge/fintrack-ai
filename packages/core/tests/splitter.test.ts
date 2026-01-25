@@ -7,7 +7,6 @@ import {
   splitExpense,
   calculateBalances,
   simplifyDebts,
-  parseNaturalLanguageSplit,
   convertCurrency,
   DEFAULT_RATES,
 } from '../src/splitter.js';
@@ -168,30 +167,6 @@ describe('simplifyDebts', () => {
 
     const settlements = simplifyDebts(transactions);
     expect(settlements).toHaveLength(0);
-  });
-});
-
-describe('parseNaturalLanguageSplit', () => {
-  const participants = ['Alice', 'Bob', 'Carol'];
-
-  it('should parse "exclude Alice"', () => {
-    const result = parseNaturalLanguageSplit('exclude Alice', participants);
-    expect(result.excludedParticipants).toContain('Alice');
-  });
-
-  it('should parse "Bob didnt join"', () => {
-    const result = parseNaturalLanguageSplit('Bob didnt join', participants);
-    expect(result.excludedParticipants).toContain('Bob');
-  });
-
-  it('should parse "without Carol"', () => {
-    const result = parseNaturalLanguageSplit('dinner without Carol', participants);
-    expect(result.excludedParticipants).toContain('Carol');
-  });
-
-  it('should handle case insensitivity', () => {
-    const result = parseNaturalLanguageSplit('exclude ALICE', participants);
-    expect(result.excludedParticipants).toContain('Alice');
   });
 });
 

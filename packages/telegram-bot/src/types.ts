@@ -26,13 +26,21 @@ export interface TelegramUpdate {
   callback_query?: CallbackQuery;
 }
 
+export interface TelegramVoice {
+  readonly file_id: string;
+  readonly file_unique_id: string;
+  readonly duration: number;
+  readonly mime_type?: string;
+  readonly file_size?: number;
+}
+
 export interface TelegramMessage {
   message_id: number;
   from?: TelegramUser;
   chat: TelegramChat;
   date: number;
   text?: string;
-  voice?: { file_id: string };
+  voice?: TelegramVoice;
   photo?: Array<{ file_id: string }>;
   location?: { latitude: number; longitude: number };
 }

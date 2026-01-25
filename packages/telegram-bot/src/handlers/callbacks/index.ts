@@ -3,11 +3,13 @@
  */
 
 import type { Environment, CallbackQuery } from '../../types.js';
-import { answerCallbackQuery } from '../../telegram/api.js';
+import { answerCallbackQuery, sendMessage } from '../../telegram/api.js';
 import { handleTransactionCallbacks } from './transaction.js';
 import { handleMenuCallbacks, handleProjectCallbacks, handleSettingsCallbacks, handleSwitchCallback } from './menu.js';
 import { handleCardCallbacks, handleCardAddCallback } from './cards.js';
 import { handleEditCallbacks, handleCategoryCallback } from './edit.js';
+import { handleHistoryCallbacks } from './history.js';
+import { handleClarifyCallback } from './clarify.js';
 
 // ============================================
 // Callback Router
@@ -32,6 +34,8 @@ const callbackHandlers = new Map<string, CallbackHandler>([
   ['set', handleSettingsCallbacks],
   ['card', handleCardCallbacks],
   ['cadd', handleCardAddCallback],
+  ['hist', handleHistoryCallbacks],
+  ['clarify', handleClarifyCallback],
 ]);
 
 // ============================================

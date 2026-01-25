@@ -216,56 +216,6 @@ export function formatSettlements(settlements: readonly Settlement[]): string {
 }
 
 // ============================================
-// Natural Language Split Parsing
-// ============================================
-
-export interface NaturalLanguageSplitResult {
-  readonly excludedParticipants: readonly string[];
-  readonly customSplits?: Readonly<Record<string, number>>;
-  readonly notes?: string;
-}
-
-/**
- * Parse natural language modifiers for splitting
- * Examples:
- * - "Alice didn't join" → exclude Alice
- * - "exclude Bob from beer" → partial exclude
- * - "Alice pays double" → custom split
- */
-export function parseNaturalLanguageSplit(
-  text: string,
-  allParticipants: readonly string[]
-): NaturalLanguageSplitResult {
-  const lowerText = text.toLowerCase();
-
-  // Patterns for exclusion
-  const exclusionPatterns = [
-    /(?:exclude|without|except|not including|minus)\s+(\w+)/gi,
-    /(\w+)\s+(?:didn't|didnt|did not|wasn't|wasnt|was not|isn't|isnt|is not)\s+(?:join|participate|there|included|eating|drinking)/gi,
-    /(?:no|not)\s+(\w+)/gi,
-  ];
-
-  const excluded = exclusionPatterns.reduce<readonly string[]>((accumulator, pattern) => {
-    const matches = Array.from(lowerText.matchAll(pattern));
-    return matches.reduce<readonly string[]>((innerAccumulator, match) => {
-      const name = match[1];
-      // Find matching participant (case-insensitive)
-      const participant = allParticipants.find(
-        (p) => p.toLowerCase() === name.toLowerCase()
-      );
-      if (participant != null && !innerAccumulator.includes(participant)) {
-        return [...innerAccumulator, participant];
-      }
-      return innerAccumulator;
-    }, accumulator);
-  }, []);
-
-  return {
-    excludedParticipants: excluded,
-  };
-}
-
-// ============================================
 // Currency Helpers
 // ============================================
 

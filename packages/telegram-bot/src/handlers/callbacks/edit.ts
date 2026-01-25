@@ -5,11 +5,11 @@
 import type { CallbackQuery, Environment } from '../../types.js';
 import { sendMessage, editMessageText, deleteMessage } from '../../telegram/api.js';
 import { getOrCreateUser, getCurrentProject } from '../../db/index.js';
-import { DEFAULT_PROJECT_ID } from '../../constants.js';
 
 const CATEGORIES = [
   'dining', 'grocery', 'gas', 'shopping', 'subscription',
-  'travel', 'transport', 'entertainment', 'health', 'utilities', 'other',
+  'travel', 'transport', 'entertainment', 'health', 'utilities',
+  'sports', 'education', 'other',
 ] as const;
 
 function chunkArray<T>(array: readonly T[], size: number): T[][] {
@@ -32,9 +32,14 @@ export async function handleEditCallbacks(
   const user = await getOrCreateUser(environment, query.from);
   const project = await getCurrentProject(environment, user.id);
 
+  if (project == null) {
+    await sendMessage(chatId, '📁 No project selected.', environment.TELEGRAM_BOT_TOKEN);
+    return;
+  }
+
   const transaction = await environment.DB.prepare(
     'SELECT id FROM transactions WHERE id = ? AND project_id = ?'
-  ).bind(transactionId, project?.id ?? DEFAULT_PROJECT_ID).first();
+  ).bind(transactionId, project.id).first();
 
   if (transaction == null) {
     await sendMessage(chatId, '❌ Transaction not found or no permission.', environment.TELEGRAM_BOT_TOKEN);
@@ -47,11 +52,13 @@ export async function handleEditCallbacks(
   }
 
   if (field === 'cat') {
-    const categoryButtons = CATEGORIES.map(category => ({
+    const categoryButtons: Array<{ text: string; callback_data: string }> = CATEGORIES.map(category => ({
       text: category,
       callback_data: `txc_${category}_${transactionId}`,
     }));
     const keyboard = chunkArray(categoryButtons, 3);
+    // Add custom input option
+    keyboard.push([{ text: '✏️ Custom...', callback_data: `txc_custom_${transactionId}` }]);
 
     await sendMessage(chatId, '🏷️ Select category:', environment.TELEGRAM_BOT_TOKEN, {
       reply_markup: { inline_keyboard: keyboard },
@@ -85,12 +92,28 @@ export async function handleCategoryCallback(
   const user = await getOrCreateUser(environment, query.from);
   const project = await getCurrentProject(environment, user.id);
 
+  if (project == null) {
+    await sendMessage(chatId, '📁 No project selected.', environment.TELEGRAM_BOT_TOKEN);
+    return;
+  }
+
   const transaction = await environment.DB.prepare(
     'SELECT id FROM transactions WHERE id = ? AND project_id = ?'
-  ).bind(transactionId, project?.id ?? DEFAULT_PROJECT_ID).first();
+  ).bind(transactionId, project.id).first();
 
   if (transaction == null) {
     await sendMessage(chatId, '❌ Transaction not found or no permission.', environment.TELEGRAM_BOT_TOKEN);
+    return;
+  }
+
+  // Handle custom category input prompt
+  if (category === 'custom') {
+    await sendMessage(
+      chatId,
+      `🏷️ Send your custom category:\n\n\`/editcat ${transactionId} your-category\``,
+      environment.TELEGRAM_BOT_TOKEN,
+      { parse_mode: 'Markdown' }
+    );
     return;
   }
 

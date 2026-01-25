@@ -5,10 +5,14 @@
 import type { CommandHandlerContext } from './index.js';
 import { sendMessage } from '../../telegram/api.js';
 import { getProjectMembers } from '../../db/index.js';
-import { DEFAULT_PROJECT_ID } from '../../constants.js';
 
 export async function handleEditAmount(context: CommandHandlerContext): Promise<void> {
   const { args, chatId, project, environment } = context;
+
+  if (project == null) {
+    await sendMessage(chatId, '📁 No project selected.', environment.TELEGRAM_BOT_TOKEN);
+    return;
+  }
 
   const [transactionId, ...amountParts] = args;
   const newAmount = parseFloat(amountParts.join(''));
@@ -20,7 +24,7 @@ export async function handleEditAmount(context: CommandHandlerContext): Promise<
 
   const transaction = await environment.DB.prepare(
     'SELECT id FROM transactions WHERE id = ? AND project_id = ?'
-  ).bind(transactionId, project?.id ?? DEFAULT_PROJECT_ID).first();
+  ).bind(transactionId, project.id).first();
 
   if (transaction == null) {
     await sendMessage(chatId, '❌ Transaction not found or no permission.', environment.TELEGRAM_BOT_TOKEN);
@@ -36,6 +40,11 @@ export async function handleEditAmount(context: CommandHandlerContext): Promise<
 export async function handleEditMerchant(context: CommandHandlerContext): Promise<void> {
   const { args, chatId, project, environment } = context;
 
+  if (project == null) {
+    await sendMessage(chatId, '📁 No project selected.', environment.TELEGRAM_BOT_TOKEN);
+    return;
+  }
+
   const [transactionId, ...merchantParts] = args;
   const newMerchant = merchantParts.join(' ').replace(/"/g, '').trim();
 
@@ -46,7 +55,7 @@ export async function handleEditMerchant(context: CommandHandlerContext): Promis
 
   const transaction = await environment.DB.prepare(
     'SELECT id FROM transactions WHERE id = ? AND project_id = ?'
-  ).bind(transactionId, project?.id ?? DEFAULT_PROJECT_ID).first();
+  ).bind(transactionId, project.id).first();
 
   if (transaction == null) {
     await sendMessage(chatId, '❌ Transaction not found or no permission.', environment.TELEGRAM_BOT_TOKEN);
@@ -64,8 +73,49 @@ export async function handleEditMerchant(context: CommandHandlerContext): Promis
   );
 }
 
+export async function handleEditCategory(context: CommandHandlerContext): Promise<void> {
+  const { args, chatId, project, environment } = context;
+
+  if (project == null) {
+    await sendMessage(chatId, '📁 No project selected.', environment.TELEGRAM_BOT_TOKEN);
+    return;
+  }
+
+  const [transactionId, ...categoryParts] = args;
+  const newCategory = categoryParts.join(' ').trim().toLowerCase();
+
+  if (transactionId == null || newCategory === '') {
+    await sendMessage(chatId, '❌ Usage: /editcat <txId> <category>', environment.TELEGRAM_BOT_TOKEN);
+    return;
+  }
+
+  const transaction = await environment.DB.prepare(
+    'SELECT id FROM transactions WHERE id = ? AND project_id = ?'
+  ).bind(transactionId, project.id).first();
+
+  if (transaction == null) {
+    await sendMessage(chatId, '❌ Transaction not found or no permission.', environment.TELEGRAM_BOT_TOKEN);
+    return;
+  }
+
+  await environment.DB.prepare('UPDATE transactions SET category = ? WHERE id = ?')
+    .bind(newCategory, transactionId).run();
+
+  await sendMessage(
+    chatId,
+    `✅ Category updated to *${newCategory}*`,
+    environment.TELEGRAM_BOT_TOKEN,
+    { parse_mode: 'Markdown' }
+  );
+}
+
 export async function handleEditSplit(context: CommandHandlerContext): Promise<void> {
-  const { args, chatId, user, project, environment } = context;
+  const { args, chatId, project, environment } = context;
+
+  if (project == null) {
+    await sendMessage(chatId, '📁 No project selected.', environment.TELEGRAM_BOT_TOKEN);
+    return;
+  }
 
   const [transactionId, ...splitParts] = args;
   const splitText = splitParts.join(' ').trim();
@@ -81,7 +131,7 @@ export async function handleEditSplit(context: CommandHandlerContext): Promise<v
 
   const transaction = await environment.DB.prepare(
     'SELECT * FROM transactions WHERE id = ? AND project_id = ?'
-  ).bind(transactionId, project?.id ?? DEFAULT_PROJECT_ID).first();
+  ).bind(transactionId, project.id).first();
 
   if (transaction == null) {
     await sendMessage(chatId, '❌ Transaction not found.', environment.TELEGRAM_BOT_TOKEN);
@@ -90,9 +140,7 @@ export async function handleEditSplit(context: CommandHandlerContext): Promise<v
 
   const newSplits: Readonly<Record<string, number>> = await (async () => {
     if (splitText.toLowerCase() === 'equal') {
-      const members = project != null
-        ? await getProjectMembers(environment, project.id)
-        : [user.firstName ?? 'User', 'Sherry'];
+      const members = await getProjectMembers(environment, project.id);
       const share = (transaction.amount as number) / members.length;
       return Object.fromEntries(
         [...members].map(member => [member, Math.round(share * 100) / 100])

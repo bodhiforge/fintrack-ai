@@ -33,6 +33,9 @@ export interface ParsedTransaction {
   readonly date: string;
   readonly location?: string;
   readonly rawText?: string;
+  // Split modifiers (extracted by LLM)
+  readonly excludedParticipants?: readonly string[];
+  readonly customSplits?: Readonly<Record<string, number>>;
 }
 
 // ============================================
@@ -72,6 +75,7 @@ export interface ProjectMember {
 
 export type Currency = 'CAD' | 'USD' | 'EUR' | 'GBP' | 'MXN' | 'CRC' | 'JPY' | string;
 
+// Common categories (GPT will use these, but custom values are allowed)
 export type Category =
   | 'dining'
   | 'grocery'
@@ -83,7 +87,10 @@ export type Category =
   | 'entertainment'
   | 'health'
   | 'utilities'
-  | 'other';
+  | 'sports'
+  | 'education'
+  | 'other'
+  | string;  // Allow custom categories
 
 // ============================================
 // Splitting Types
@@ -159,8 +166,26 @@ export interface ApiResponse<T> {
   readonly error?: string;
 }
 
+export interface ConfidenceFactors {
+  readonly merchant: number;  // 0-1: How clear is the merchant name
+  readonly amount: number;    // 0-1: How clear is the amount
+  readonly category: number;  // 0-1: How confident is the category match
+}
+
 export interface ParserResponse {
   readonly parsed: ParsedTransaction;
   readonly confidence: number;
+  readonly confidenceFactors?: ConfidenceFactors;
   readonly warnings?: readonly string[];
+}
+
+// ============================================
+// Few-shot Learning Types
+// ============================================
+
+export interface HistoryExample {
+  readonly input: string;
+  readonly merchant: string;
+  readonly category: string;
+  readonly currency: string;
 }

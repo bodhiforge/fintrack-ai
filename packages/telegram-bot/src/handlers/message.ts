@@ -5,18 +5,20 @@
 import {
   TransactionParser,
   splitExpense,
-  parseNaturalLanguageSplit,
-  recommendCard,
-  detectForeignByLocation,
-  formatRecommendation,
-  formatBenefits,
 } from '@fintrack-ai/core';
+import type { ConfidenceFactors } from '@fintrack-ai/core';
 import type { Environment, TelegramMessage, TelegramUser } from '../types.js';
 import { TransactionStatus } from '../constants.js';
-import { getOrCreateUser, getCurrentProject, getProjectMembers, getUserCards } from '../db/index.js';
+
+// Confidence threshold for triggering clarification flow
+const CLARIFICATION_THRESHOLD = 0.7;
+import { getOrCreateUser, getCurrentProject, getProjectMembers, getRecentExamples } from '../db/index.js';
 import { sendMessage } from '../telegram/api.js';
 import { detectCityFromCoords } from '../utils/index.js';
 import { handleCommand } from './commands/index.js';
+import { transcribeAudio, downloadTelegramFile } from '../services/whisper.js';
+import { parseReceipt, blobToBase64, getMimeType } from '../services/vision.js';
+import { processWithAgent, type AgentContext } from '../agent/index.js';
 
 // ============================================
 // Location Message Handler
@@ -70,6 +72,283 @@ export async function handleLocationMessage(
 }
 
 // ============================================
+// Voice Message Handler
+// ============================================
+
+export async function handleVoiceMessage(
+  message: TelegramMessage,
+  environment: Environment
+): Promise<void> {
+  const chatId = message.chat.id;
+  const telegramUser = message.from;
+
+  if (telegramUser == null || message.voice == null) {
+    return;
+  }
+
+  // Send "processing" indicator
+  await sendMessage(
+    chatId,
+    '🎤 _Processing voice message..._',
+    environment.TELEGRAM_BOT_TOKEN,
+    { parse_mode: 'Markdown' }
+  );
+
+  try {
+    // Download audio from Telegram
+    const audioBlob = await downloadTelegramFile(
+      message.voice.file_id,
+      environment.TELEGRAM_BOT_TOKEN
+    );
+
+    // Transcribe with Whisper
+    const transcription = await transcribeAudio(audioBlob, environment.OPENAI_API_KEY);
+
+    if (transcription.text === '') {
+      await sendMessage(
+        chatId,
+        '❌ Could not understand the voice message. Please try again.',
+        environment.TELEGRAM_BOT_TOKEN
+      );
+      return;
+    }
+
+    // Show transcription and process as text
+    await sendMessage(
+      chatId,
+      `🎤 _"${transcription.text}"_`,
+      environment.TELEGRAM_BOT_TOKEN,
+      { parse_mode: 'Markdown' }
+    );
+
+    // Route through agent for intent classification
+    const user = await getOrCreateUser(environment, telegramUser);
+    const project = await getCurrentProject(environment, user.id);
+
+    if (project == null) {
+      await sendMessage(
+        chatId,
+        `📁 No project selected.\n\nCreate one with /new or join with /join`,
+        environment.TELEGRAM_BOT_TOKEN
+      );
+      return;
+    }
+
+    const agentContext: AgentContext = {
+      chatId,
+      user,
+      project,
+      environment,
+      telegramUser,
+    };
+
+    try {
+      const result = await processWithAgent(transcription.text, agentContext);
+      await handleAgentResult(result, chatId, telegramUser, environment);
+    } catch (error) {
+      console.error('[Agent] Error in voice processWithAgent:', error);
+      await processTransactionText(transcription.text, chatId, telegramUser, environment);
+    }
+  } catch (error) {
+    console.error('Voice processing error:', error);
+    await sendMessage(
+      chatId,
+      `❌ Failed to process voice: ${error instanceof Error ? error.message : 'Unknown error'}`,
+      environment.TELEGRAM_BOT_TOKEN
+    );
+  }
+}
+
+// ============================================
+// Photo Message Handler (Receipt OCR)
+// ============================================
+
+export async function handlePhotoMessage(
+  message: TelegramMessage,
+  environment: Environment
+): Promise<void> {
+  const chatId = message.chat.id;
+  const telegramUser = message.from;
+
+  if (telegramUser == null || message.photo == null || message.photo.length === 0) {
+    return;
+  }
+
+  // Get the largest photo (best quality - last in array)
+  const largestPhoto = message.photo[message.photo.length - 1];
+
+  // Send "processing" indicator
+  await sendMessage(
+    chatId,
+    '📷 _Processing receipt image..._',
+    environment.TELEGRAM_BOT_TOKEN,
+    { parse_mode: 'Markdown' }
+  );
+
+  try {
+    // Download image from Telegram
+    const imageBlob = await downloadTelegramFile(
+      largestPhoto.file_id,
+      environment.TELEGRAM_BOT_TOKEN
+    );
+
+    // Convert to base64 for GPT-4o Vision
+    const imageBase64 = await blobToBase64(imageBlob);
+
+    // Parse receipt with GPT-4o Vision
+    const receiptData = await parseReceipt(
+      imageBase64,
+      environment.OPENAI_API_KEY,
+      imageBlob.type ?? 'image/jpeg'
+    );
+
+    // Process as transaction
+    await processReceiptTransaction(receiptData, chatId, telegramUser, environment);
+  } catch (error) {
+    console.error('Photo processing error:', error);
+    await sendMessage(
+      chatId,
+      `❌ Failed to process receipt: ${error instanceof Error ? error.message : 'Unknown error'}`,
+      environment.TELEGRAM_BOT_TOKEN
+    );
+  }
+}
+
+/**
+ * Process a parsed receipt into a transaction
+ */
+async function processReceiptTransaction(
+  receiptData: {
+    readonly merchant: string;
+    readonly amount: number;
+    readonly currency: string;
+    readonly date: string;
+    readonly category: string;
+    readonly items?: readonly string[];
+    readonly confidence: {
+      readonly merchant: number;
+      readonly amount: number;
+      readonly category: number;
+    };
+  },
+  chatId: number,
+  telegramUser: TelegramUser,
+  environment: Environment
+): Promise<void> {
+  const user = await getOrCreateUser(environment, telegramUser);
+  const project = await getCurrentProject(environment, user.id);
+  const userName = user.firstName ?? 'User';
+
+  if (project == null) {
+    await sendMessage(
+      chatId,
+      `📁 No project selected.\n\nCreate one with /new or join with /join`,
+      environment.TELEGRAM_BOT_TOKEN
+    );
+    return;
+  }
+
+  const membership = await environment.DB.prepare(
+    'SELECT display_name FROM project_members WHERE project_id = ? AND user_id = ?'
+  ).bind(project.id, user.id).first();
+  const payerName = (membership?.display_name as string) ?? userName;
+
+  const participants = await getProjectMembers(environment, project.id);
+
+  // Use receipt data for transaction
+  const currency = receiptData.currency;
+  const category = receiptData.category;
+
+  const splitResult = splitExpense({
+    totalAmount: receiptData.amount,
+    currency,
+    payer: payerName,
+    participants: [...participants],
+  });
+
+  const transactionId = crypto.randomUUID();
+
+  await environment.DB.prepare(`
+    INSERT INTO transactions (id, project_id, user_id, chat_id, merchant, amount, currency, category, location, card_last_four, payer, is_shared, splits, status, created_at, raw_input)
+    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+  `).bind(
+    transactionId,
+    project.id,
+    user.id,
+    chatId,
+    receiptData.merchant,
+    receiptData.amount,
+    currency,
+    category,
+    null,
+    null,
+    payerName,
+    1,
+    JSON.stringify(splitResult.shares),
+    TransactionStatus.PENDING,
+    new Date().toISOString(),
+    '[receipt image]'
+  ).run();
+
+  const splitLines = Object.entries(splitResult.shares)
+    .map(([person, share]) => `  ${person}: $${share.toFixed(2)}`);
+
+  // Check if we need to show clarification
+  const confidenceFactors = receiptData.confidence;
+  const needsClarification =
+    confidenceFactors.merchant < CLARIFICATION_THRESHOLD ||
+    confidenceFactors.amount < CLARIFICATION_THRESHOLD ||
+    confidenceFactors.category < CLARIFICATION_THRESHOLD;
+
+  const clarificationSection = needsClarification
+    ? generateClarificationMessage(
+        { merchant: receiptData.merchant, amount: receiptData.amount, category },
+        confidenceFactors
+      )
+    : [];
+
+  const itemsSection = receiptData.items != null && receiptData.items.length > 0
+    ? ['', '*Items:*', ...receiptData.items.map(item => `  • ${item}`)]
+    : [];
+
+  const responseParts = [
+    `🧾 *Receipt Scanned*`,
+    `📁 _${project.name}_`,
+    '',
+    `📍 ${receiptData.merchant}`,
+    `💰 $${receiptData.amount.toFixed(2)} ${currency}`,
+    `🏷️ ${category}`,
+    `📅 ${receiptData.date}`,
+    ...itemsSection,
+    '',
+    '*Split:*',
+    ...splitLines,
+    ...clarificationSection,
+  ];
+
+  // Build keyboard based on whether clarification is needed
+  const inlineKeyboard = needsClarification
+    ? buildClarificationKeyboard(transactionId, confidenceFactors)
+    : [
+        [
+          { text: '✅ Confirm', callback_data: `confirm_${transactionId}` },
+          { text: '👤 Personal', callback_data: `personal_${transactionId}` },
+        ],
+        [
+          { text: '✏️ Edit', callback_data: `edit_${transactionId}` },
+          { text: '❌ Delete', callback_data: `delete_${transactionId}` },
+        ],
+      ];
+
+  await sendMessage(chatId, responseParts.join('\n'), environment.TELEGRAM_BOT_TOKEN, {
+    parse_mode: 'Markdown',
+    reply_markup: {
+      inline_keyboard: inlineKeyboard,
+    },
+  });
+}
+
+// ============================================
 // Text Message Handler
 // ============================================
 
@@ -91,6 +370,181 @@ export async function handleTextMessage(
     return;
   }
 
+  const trimmedText = text.trim();
+  if (trimmedText.length < 2) {
+    return;
+  }
+
+  // Route through agent for intent classification
+  const user = await getOrCreateUser(environment, telegramUser);
+  const project = await getCurrentProject(environment, user.id);
+
+  if (project == null) {
+    await sendMessage(
+      chatId,
+      `📁 No project selected.\n\nCreate one with /new or join with /join`,
+      environment.TELEGRAM_BOT_TOKEN
+    );
+    return;
+  }
+
+  const agentContext: AgentContext = {
+    chatId,
+    user,
+    project,
+    environment,
+    telegramUser,
+  };
+
+  try {
+    const result = await processWithAgent(trimmedText, agentContext);
+    console.log(`[Agent] Result type: ${result.type}`);
+
+    // Handle agent result
+    await handleAgentResult(result, chatId, telegramUser, environment);
+  } catch (error) {
+    console.error('[Agent] Error in processWithAgent:', error);
+    // Fallback to legacy parser on agent error
+    await processTransactionText(trimmedText, chatId, telegramUser, environment);
+  }
+}
+
+// ============================================
+// Agent Result Handler
+// ============================================
+
+async function handleAgentResult(
+  result: Awaited<ReturnType<typeof processWithAgent>>,
+  chatId: number,
+  telegramUser: TelegramUser,
+  environment: Environment
+): Promise<void> {
+  switch (result.type) {
+    case 'delegate': {
+      // Delegate to existing handlers
+      if (result.handler === 'parseTransaction' && result.input != null) {
+        await processTransactionText(result.input, chatId, telegramUser, environment);
+      } else if (result.handler === 'handleBalance') {
+        await handleCommand('/balance', chatId, telegramUser, environment);
+      } else if (result.handler === 'handleUndo') {
+        await handleCommand('/undo', chatId, telegramUser, environment);
+      } else if (result.handler === 'handleHistory') {
+        await handleCommand('/history', chatId, telegramUser, environment);
+      }
+      break;
+    }
+
+    case 'message': {
+      await sendMessage(chatId, result.message, environment.TELEGRAM_BOT_TOKEN, {
+        parse_mode: result.parseMode ?? 'Markdown',
+      });
+      break;
+    }
+
+    case 'confirm':
+    case 'select': {
+      await sendMessage(chatId, result.message, environment.TELEGRAM_BOT_TOKEN, {
+        parse_mode: 'Markdown',
+        reply_markup: {
+          inline_keyboard: result.keyboard as Array<Array<{ text: string; callback_data: string }>>,
+        },
+      });
+      break;
+    }
+
+    case 'error': {
+      await sendMessage(chatId, result.message, environment.TELEGRAM_BOT_TOKEN);
+      break;
+    }
+  }
+}
+
+// ============================================
+// Clarification Helpers
+// ============================================
+
+interface ParsedForClarification {
+  readonly merchant: string;
+  readonly amount: number;
+  readonly category: string;
+}
+
+function generateClarificationMessage(
+  parsed: ParsedForClarification,
+  factors: ConfidenceFactors
+): readonly string[] {
+  const lowConfidenceFields: string[] = [];
+
+  if (factors.merchant < CLARIFICATION_THRESHOLD) {
+    lowConfidenceFields.push(`商家: "${parsed.merchant}"?`);
+  }
+  if (factors.amount < CLARIFICATION_THRESHOLD) {
+    lowConfidenceFields.push(`金额: $${parsed.amount.toFixed(2)}?`);
+  }
+  if (factors.category < CLARIFICATION_THRESHOLD) {
+    lowConfidenceFields.push(`类别: ${parsed.category}?`);
+  }
+
+  return lowConfidenceFields.length > 0
+    ? ['', '🤔 *请确认:*', ...lowConfidenceFields]
+    : [];
+}
+
+interface InlineButton {
+  readonly text: string;
+  readonly callback_data: string;
+}
+
+function buildClarificationKeyboard(
+  transactionId: string,
+  factors: ConfidenceFactors
+): readonly (readonly InlineButton[])[] {
+  const editButtons: InlineButton[] = [];
+
+  // Add edit buttons for low confidence fields
+  if (factors.amount < CLARIFICATION_THRESHOLD) {
+    editButtons.push({ text: '✏️ 改金额', callback_data: `txe_amt_${transactionId}` });
+  }
+  if (factors.merchant < CLARIFICATION_THRESHOLD) {
+    editButtons.push({ text: '✏️ 改商家', callback_data: `txe_mrc_${transactionId}` });
+  }
+  if (factors.category < CLARIFICATION_THRESHOLD) {
+    editButtons.push({ text: '✏️ 改类别', callback_data: `txe_cat_${transactionId}` });
+  }
+
+  // Build keyboard rows
+  const keyboard: (readonly InlineButton[])[] = [
+    // First row: Confirm (this is correct) + highest priority edit
+    [
+      { text: '✅ 正确', callback_data: `confirm_${transactionId}` },
+      ...(editButtons.length > 0 ? [editButtons[0]] : []),
+    ],
+  ];
+
+  // Second row: remaining edit buttons or standard options
+  if (editButtons.length > 1) {
+    keyboard.push(editButtons.slice(1));
+  }
+
+  // Last row: Personal + Delete options
+  keyboard.push([
+    { text: '👤 Personal', callback_data: `personal_${transactionId}` },
+    { text: '❌ Delete', callback_data: `delete_${transactionId}` },
+  ]);
+
+  return keyboard;
+}
+
+// ============================================
+// Shared Transaction Processing
+// ============================================
+
+export async function processTransactionText(
+  text: string,
+  chatId: number,
+  telegramUser: TelegramUser,
+  environment: Environment
+): Promise<void> {
   // Get or create user and their current project
   const user = await getOrCreateUser(environment, telegramUser);
   const project = await getCurrentProject(environment, user.id);
@@ -105,37 +559,45 @@ export async function handleTextMessage(
     return;
   }
 
-  const trimmedText = text.trim();
-  if (trimmedText.length < 2) {
-    return;
-  }
-
   try {
-    const parser = new TransactionParser(environment.OPENAI_API_KEY);
-    const { parsed, confidence, warnings } = await parser.parseNaturalLanguage(text);
-
     const membership = await environment.DB.prepare(
       'SELECT display_name FROM project_members WHERE project_id = ? AND user_id = ?'
     ).bind(project.id, user.id).first();
     const payerName = (membership?.display_name as string) ?? userName;
 
     const participants = await getProjectMembers(environment, project.id);
-    const splitMods = parseNaturalLanguageSplit(text, [...participants]);
+
+    // Fetch user's recent transactions for few-shot learning
+    const historyExamples = await getRecentExamples(environment.DB, user.id, 10);
+
+    // Parse transaction with project context and few-shot examples
+    const parser = new TransactionParser(environment.OPENAI_API_KEY);
+    const { parsed, confidence, confidenceFactors, warnings } = await parser.parseNaturalLanguage(text, {
+      participants: [...participants],
+      defaultCurrency: project.defaultCurrency,
+      defaultLocation: project.defaultLocation ?? undefined,
+      examples: historyExamples,
+    });
+
+    // Parser uses project defaults, but ensure location isn't empty string
+    const currency = parsed.currency;
+    const location = (parsed.location != null && parsed.location !== '')
+      ? parsed.location
+      : null;
 
     const splitResult = splitExpense({
       totalAmount: parsed.amount,
-      currency: parsed.currency,
+      currency,
       payer: payerName,
       participants: [...participants],
-      excludedParticipants: splitMods.excludedParticipants,
+      excludedParticipants: parsed.excludedParticipants != null ? [...parsed.excludedParticipants] : [],
+      customSplits: parsed.customSplits,
     });
-
-    const location = parsed.location ?? project.defaultLocation ?? null;
     const transactionId = crypto.randomUUID();
 
     await environment.DB.prepare(`
-      INSERT INTO transactions (id, project_id, user_id, chat_id, merchant, amount, currency, category, location, card_last_four, payer, is_shared, splits, status, created_at)
-      VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+      INSERT INTO transactions (id, project_id, user_id, chat_id, merchant, amount, currency, category, location, card_last_four, payer, is_shared, splits, status, created_at, raw_input)
+      VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
     `).bind(
       transactionId,
       project.id,
@@ -143,7 +605,7 @@ export async function handleTextMessage(
       chatId,
       parsed.merchant,
       parsed.amount,
-      parsed.currency,
+      currency,
       parsed.category,
       location,
       parsed.cardLastFour ?? null,
@@ -151,39 +613,34 @@ export async function handleTextMessage(
       1,
       JSON.stringify(splitResult.shares),
       TransactionStatus.PENDING,
-      new Date().toISOString()
+      new Date().toISOString(),
+      text
     ).run();
-
-    const userCards = await getUserCards(environment, user.id);
-    const foreignCheck = detectForeignByLocation(location ?? undefined, parsed.currency);
-    const cardRecommendation = recommendCard(parsed, [...userCards], foreignCheck.isForeign);
-
-    const bestRecommendation = foreignCheck.warning != null && cardRecommendation.best.warning == null
-      ? { ...cardRecommendation.best, warning: foreignCheck.warning }
-      : cardRecommendation.best;
 
     const splitLines = Object.entries(splitResult.shares)
       .map(([person, share]) => `  ${person}: $${share.toFixed(2)}`);
 
-    const cardSection = userCards.length > 0
-      ? [
-          '',
-          formatRecommendation(bestRecommendation),
-          ...(bestRecommendation.relevantBenefits.length > 0
-            ? [formatBenefits(bestRecommendation.relevantBenefits)]
-            : []),
-        ]
-      : ['', '💳 _Add your cards with /cards to see rewards_'];
-
-    const suggestionSection = cardRecommendation.missingCardSuggestion != null
-      ? ['', `💡 _${cardRecommendation.missingCardSuggestion.reason}_`]
-      : [];
+    // TODO: Re-enable card recommendations when ready
+    // const userCards = await getUserCards(environment, user.id);
+    // const foreignCheck = detectForeignByLocation(location ?? undefined, parsed.currency);
+    // const cardRecommendation = recommendCard(parsed, [...userCards], foreignCheck.isForeign);
 
     const warningsSection = warnings != null && warnings.length > 0
       ? ['', `⚠️ ${warnings.join(', ')}`]
       : [];
 
-    const confidenceSection = confidence < 1
+    // Check if we need to show clarification
+    const needsClarification = confidenceFactors != null && (
+      confidenceFactors.merchant < CLARIFICATION_THRESHOLD ||
+      confidenceFactors.amount < CLARIFICATION_THRESHOLD ||
+      confidenceFactors.category < CLARIFICATION_THRESHOLD
+    );
+
+    const clarificationSection = needsClarification
+      ? generateClarificationMessage(parsed, confidenceFactors)
+      : [];
+
+    const confidenceSection = confidence < 1 && !needsClarification
       ? ['', `_Confidence: ${(confidence * 100).toFixed(0)}%_`]
       : [];
 
@@ -192,22 +649,21 @@ export async function handleTextMessage(
       `📁 _${project.name}_`,
       '',
       `📍 ${parsed.merchant}${location != null ? ` (${location})` : ''}`,
-      `💰 $${parsed.amount.toFixed(2)} ${parsed.currency}`,
+      `💰 $${parsed.amount.toFixed(2)} ${currency}`,
       `🏷️ ${parsed.category}`,
       `📅 ${parsed.date}`,
       '',
       '*Split:*',
       ...splitLines,
-      ...cardSection,
-      ...suggestionSection,
       ...warningsSection,
+      ...clarificationSection,
       ...confidenceSection,
     ];
 
-    await sendMessage(chatId, responseParts.join('\n'), environment.TELEGRAM_BOT_TOKEN, {
-      parse_mode: 'Markdown',
-      reply_markup: {
-        inline_keyboard: [
+    // Build keyboard based on whether clarification is needed
+    const inlineKeyboard = needsClarification
+      ? buildClarificationKeyboard(transactionId, confidenceFactors)
+      : [
           [
             { text: '✅ Confirm', callback_data: `confirm_${transactionId}` },
             { text: '👤 Personal', callback_data: `personal_${transactionId}` },
@@ -216,7 +672,12 @@ export async function handleTextMessage(
             { text: '✏️ Edit', callback_data: `edit_${transactionId}` },
             { text: '❌ Delete', callback_data: `delete_${transactionId}` },
           ],
-        ],
+        ];
+
+    await sendMessage(chatId, responseParts.join('\n'), environment.TELEGRAM_BOT_TOKEN, {
+      parse_mode: 'Markdown',
+      reply_markup: {
+        inline_keyboard: inlineKeyboard,
       },
     });
   } catch (error) {

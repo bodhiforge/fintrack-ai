@@ -4,11 +4,21 @@
 
 import type { CommandHandlerContext } from './index.js';
 import { sendMessage } from '../../telegram/api.js';
+import { getUserCards } from '../../db/index.js';
 
 export async function handleMenu(context: CommandHandlerContext): Promise<void> {
-  const { chatId, project, environment } = context;
+  const { chatId, user, project, environment } = context;
+
+  // Check if user has cards
+  const userCards = await getUserCards(environment, user.id);
+  const hasCards = userCards.length > 0;
 
   if (project != null) {
+    // User has a project - show main menu
+    const cardPrompt = hasCards
+      ? '💳 Cards'
+      : '💳 Add Cards ⚡';
+
     await sendMessage(
       chatId,
       `📁 *${project.name}*\n\nSend a message to track expenses, or tap a button:`,
@@ -24,7 +34,7 @@ export async function handleMenu(context: CommandHandlerContext): Promise<void> 
             ],
             [
               { text: '📁 Projects', callback_data: 'menu_projects' },
-              { text: '💳 Cards', callback_data: 'menu_cards' },
+              { text: cardPrompt, callback_data: 'menu_cards' },
               { text: '❓ Help', callback_data: 'menu_help' },
             ],
           ],
@@ -32,27 +42,41 @@ export async function handleMenu(context: CommandHandlerContext): Promise<void> 
       }
     );
   } else {
-    await sendMessage(
-      chatId,
-      `📁 *No Project*\n\nCreate or join a project to start tracking:`,
-      environment.TELEGRAM_BOT_TOKEN,
-      {
-        parse_mode: 'Markdown',
-        reply_markup: {
-          inline_keyboard: [
-            [
-              { text: '➕ New Project', callback_data: 'proj_new' },
-              { text: '🔗 Join Project', callback_data: 'proj_join' },
-            ],
-            [
-              { text: '📋 My Projects', callback_data: 'proj_list' },
-              { text: '❓ Help', callback_data: 'menu_help' },
-            ],
-          ],
-        },
-      }
-    );
+    // No project - show onboarding
+    await sendOnboarding(chatId, user.firstName ?? 'there', environment);
   }
+}
+
+async function sendOnboarding(
+  chatId: number,
+  firstName: string,
+  environment: { readonly TELEGRAM_BOT_TOKEN: string }
+): Promise<void> {
+  const welcomeMessage = [
+    `👋 *Welcome, ${firstName}!*`,
+    '',
+    "I'm FinTrack AI - your smart expense tracker.",
+    '',
+    '*What I can do:*',
+    '• 📝 Track expenses via text or voice 🎤',
+    '• 💳 Recommend the best card to maximize rewards',
+    '• 👥 Split expenses with friends',
+    '• 📊 Track who owes what automatically',
+    '',
+    '*Get started:*',
+  ].join('\n');
+
+  await sendMessage(chatId, welcomeMessage, environment.TELEGRAM_BOT_TOKEN, {
+    parse_mode: 'Markdown',
+    reply_markup: {
+      inline_keyboard: [
+        [
+          { text: '➕ Create Project', callback_data: 'onboard_new' },
+          { text: '🔗 Join Project', callback_data: 'onboard_join' },
+        ],
+      ],
+    },
+  });
 }
 
 export async function handleHelp(context: CommandHandlerContext): Promise<void> {
@@ -65,15 +89,18 @@ export async function handleHelp(context: CommandHandlerContext): Promise<void> 
     '/s - Settle',
     '/hi - History',
     '/p - Projects',
+    '/undo - Undo last',
     '',
-    '*Project Management:*',
-    '/new <name> - Create project',
-    '/join <code> - Join project',
+    '*Project:*',
+    '/new <name> - Create',
+    '/join <code> - Join',
     '',
     '*Track Expenses:*',
-    'Just send a message!',
+    'Text or voice 🎤',
+    '',
+    '_Examples:_',
     '"lunch 50 McDonald\'s"',
-    '"Costco 150"',
+    '"晚饭120不算小明"',
   ].join('\n');
 
   await sendMessage(chatId, helpText, environment.TELEGRAM_BOT_TOKEN, {
