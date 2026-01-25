@@ -5,14 +5,10 @@
 import {
   TransactionParser,
   splitExpense,
-  recommendCard,
-  detectForeignByLocation,
-  formatRecommendationWithValue,
-  formatBenefits,
 } from '@fintrack-ai/core';
 import type { Environment, TelegramMessage, TelegramUser } from '../types.js';
 import { TransactionStatus } from '../constants.js';
-import { getOrCreateUser, getCurrentProject, getProjectMembers, getUserCards } from '../db/index.js';
+import { getOrCreateUser, getCurrentProject, getProjectMembers } from '../db/index.js';
 import { sendMessage } from '../telegram/api.js';
 import { detectCityFromCoords } from '../utils/index.js';
 import { handleCommand } from './commands/index.js';
@@ -238,34 +234,13 @@ async function processTransactionText(
       new Date().toISOString()
     ).run();
 
-    const userCards = await getUserCards(environment, user.id);
-    const foreignCheck = detectForeignByLocation(location ?? undefined, parsed.currency);
-    const cardRecommendation = recommendCard(parsed, [...userCards], foreignCheck.isForeign);
-
-    // Apply foreign warning if needed
-    const recommendation = foreignCheck.warning != null && cardRecommendation.best.warning == null
-      ? {
-          ...cardRecommendation,
-          best: { ...cardRecommendation.best, warning: foreignCheck.warning },
-        }
-      : cardRecommendation;
-
     const splitLines = Object.entries(splitResult.shares)
       .map(([person, share]) => `  ${person}: $${share.toFixed(2)}`);
 
-    const cardSection = userCards.length > 0
-      ? [
-          '',
-          formatRecommendationWithValue(recommendation),
-          ...(recommendation.best.relevantBenefits.length > 0
-            ? [formatBenefits(recommendation.best.relevantBenefits)]
-            : []),
-        ]
-      : ['', '💳 _Add your cards with /cards to see rewards_'];
-
-    const suggestionSection = cardRecommendation.missingCardSuggestion != null
-      ? ['', `💡 _${cardRecommendation.missingCardSuggestion.reason}_`]
-      : [];
+    // TODO: Re-enable card recommendations when ready
+    // const userCards = await getUserCards(environment, user.id);
+    // const foreignCheck = detectForeignByLocation(location ?? undefined, parsed.currency);
+    // const cardRecommendation = recommendCard(parsed, [...userCards], foreignCheck.isForeign);
 
     const warningsSection = warnings != null && warnings.length > 0
       ? ['', `⚠️ ${warnings.join(', ')}`]
@@ -286,8 +261,6 @@ async function processTransactionText(
       '',
       '*Split:*',
       ...splitLines,
-      ...cardSection,
-      ...suggestionSection,
       ...warningsSection,
       ...confidenceSection,
     ];
