@@ -1,68 +1,68 @@
 /**
  * AI-powered transaction parser
- * Extracts structured data from bank emails and natural language input
+ * Uses OpenAI Structured Outputs with Zod schema
  */
 
+import OpenAI from 'openai';
+import { z } from 'zod';
+import { zodResponseFormat } from 'openai/helpers/zod';
 import type { ParsedTransaction, ParserResponse, Category, Currency } from './types.js';
 
 // ============================================
-// Configuration
+// Zod Schema
 // ============================================
 
-const SYSTEM_PROMPT = `You are a precise financial data extractor. Extract transaction information from natural language descriptions.
+const ExpenseSchema = z.object({
+  merchant: z.string().describe('What they paid for - store name, item, or activity'),
+  amount: z.number().describe('The amount spent'),
+  currency: z.string().default('CAD').describe('Currency code (CAD, USD, EUR, etc.)'),
+  category: z.string().describe('Expense category: dining, grocery, gas, shopping, subscription, travel, transport, entertainment, health, utilities, sports, education, or other'),
+  cardLastFour: z.string().default('unknown').describe('Last 4 digits of card if mentioned'),
+  date: z.string().describe('Date in YYYY-MM-DD format'),
+  location: z.string().nullable().describe('City or country if mentioned'),
+  excludedParticipants: z.array(z.string()).default([]).describe('Names of people NOT splitting this expense'),
+  customSplits: z.record(z.string(), z.number()).nullable().describe('Custom split amounts per person'),
+});
 
-Return ONLY valid JSON with these fields:
-- merchant: string (store name OR expense description - NEVER "unknown")
-- amount: number (extract the number from input, e.g., 50.00)
-- currency: string (CAD, USD, EUR, etc. Default CAD)
-- category: string (use common: dining, grocery, gas, shopping, subscription, travel, transport, entertainment, health, utilities, sports, education, other - OR create a fitting custom category)
-- cardLastFour: string (last 4 digits if mentioned, otherwise "unknown")
-- date: string (YYYY-MM-DD, default today)
-- location: string or null (city/country if mentioned)
-- excludedParticipants: string[] (people NOT participating, empty array if none)
-- customSplits: object or null (custom amounts if mentioned)
+type ExpenseOutput = z.infer<typeof ExpenseSchema>;
 
-IMPORTANT - Input parsing examples:
-- "basketball fee 26" → merchant: "Basketball fee", amount: 26
-- "lunch 50" → merchant: "Lunch", amount: 50
-- "uber 15" → merchant: "Uber", amount: 15
-- "coffee 5" → merchant: "Coffee", amount: 5
-- "打车 30" → merchant: "打车", amount: 30
-- "晚饭120" → merchant: "晚饭", amount: 120
-- "Costco 150" → merchant: "Costco", amount: 150
+// ============================================
+// System Prompt
+// ============================================
 
-Category rules:
-- dining: restaurants, cafes, food delivery
-- grocery: supermarkets (Costco, T&T)
-- gas: gas stations, EV charging
-- shopping: retail, Amazon
-- subscription: Netflix, Spotify
-- travel: flights, hotels, Airbnb
-- transport: Uber rides, transit, parking
-- entertainment: movies, concerts, games, sports fees
-- health: pharmacy, medical
-- utilities: phone, internet
-- other: anything else
+const SYSTEM_PROMPT = `You are parsing expense tracking input for a personal finance app.
 
-Split modifiers (match participant names exactly):
-- "lunch 50 without Alice" → excludedParticipants: ["Alice"]
-- "晚饭120不算小明" → excludedParticipants: ["小明"]
+## Context
+Users are logging expenses right after paying. They type quickly using shorthand, abbreviations, mixed languages (English/Chinese), or voice transcription. Your job is to understand their intent and extract structured data.
 
-Return JSON only. No explanation.`;
+## User's Mental Model
+- They just spent money and want to record it fast
+- Input typically contains: WHAT (description) + HOW MUCH (amount)
+- Order varies, format is inconsistent, and that's OK
+- They may mention who to exclude from splitting the bill
+
+## Guidelines
+- merchant: Use their words, never output "unknown". If they say "午饭", use "午饭"
+- amount: Extract the numeric value
+- category: Infer from context using common sense (coffee → dining, Uber → transport, gym → sports)
+- date: Default to today if not specified
+- excludedParticipants: Match names exactly from the participant list if provided
+- Preserve the user's language (Chinese stays Chinese, English stays English)`;
 
 // ============================================
 // Parser Class
 // ============================================
 
 export class TransactionParser {
-  private apiKey: string;
+  private client: OpenAI;
   private model: string;
-  private baseUrl: string;
 
   constructor(apiKey: string, options?: { model?: string; baseUrl?: string }) {
-    this.apiKey = apiKey;
+    this.client = new OpenAI({
+      apiKey,
+      baseURL: options?.baseUrl,
+    });
     this.model = options?.model ?? 'gpt-4o-mini';
-    this.baseUrl = options?.baseUrl ?? 'https://api.openai.com/v1';
   }
 
   /**
@@ -77,185 +77,87 @@ export class TransactionParser {
   }
 
   /**
-   * Parse natural language input (e.g., "dinner 50 USD at Sukiya")
-   * @param text - The user input text
-   * @param options - Optional parsing options
-   * @param options.participants - List of participant names for split detection
+   * Parse natural language input
    */
   async parseNaturalLanguage(
     text: string,
     options?: { participants?: readonly string[] }
   ): Promise<ParserResponse> {
-    const participantContext = options?.participants != null && options.participants.length > 0
+    const participantContext = options?.participants?.length
       ? `\n\nParticipants in this group: ${options.participants.join(', ')}`
       : '';
     return this.parse(text + participantContext);
   }
 
   /**
-   * Core parsing logic
+   * Core parsing logic using Structured Outputs
    */
   private async parse(input: string): Promise<ParserResponse> {
-    const response = await fetch(`${this.baseUrl}/chat/completions`, {
-      method: 'POST',
-      headers: {
-        'Authorization': `Bearer ${this.apiKey}`,
-        'Content-Type': 'application/json',
-      },
-      body: JSON.stringify({
-        model: this.model,
-        messages: [
-          { role: 'system', content: SYSTEM_PROMPT },
-          { role: 'user', content: input },
-        ],
-        temperature: 0,
-        max_tokens: 500,
-      }),
-    });
-
-    if (!response.ok) {
-      const error = await response.text();
-      throw new Error(`OpenAI API error: ${error}`);
-    }
-
-    const result = await response.json() as {
-      choices: Array<{
-        message: { content: string };
-        finish_reason: string;
-      }>;
-    };
-
-    const content = result.choices[0]?.message?.content ?? '';
-
-    try {
-      // Clean potential markdown code blocks
-      const jsonStr = content.replace(/```json\n?|\n?```/g, '').trim();
-      const parsed = JSON.parse(jsonStr) as ParsedTransaction;
-
-      // Validate and normalize
-      const validated = this.validate(parsed);
-      const warnings = this.checkWarnings(validated, input);
-
-      return {
-        parsed: validated,
-        confidence: warnings.length === 0 ? 1.0 : 0.8,
-        warnings: warnings.length > 0 ? warnings : undefined,
-      };
-    } catch (e) {
-      throw new Error(`Failed to parse AI response: ${content}`);
-    }
-  }
-
-  /**
-   * Validate and normalize parsed data
-   */
-  private validate(parsed: Partial<ParsedTransaction>): ParsedTransaction {
     const today = new Date().toISOString().split('T')[0];
 
-    // Normalize excludedParticipants to array
-    const excludedParticipants = Array.isArray(parsed.excludedParticipants)
-      ? parsed.excludedParticipants.filter((p): p is string => typeof p === 'string' && p.length > 0)
-      : undefined;
+    const completion = await this.client.beta.chat.completions.parse({
+      model: this.model,
+      messages: [
+        { role: 'system', content: SYSTEM_PROMPT },
+        { role: 'user', content: `Today's date: ${today}\n\nInput: ${input}` },
+      ],
+      response_format: zodResponseFormat(ExpenseSchema, 'expense'),
+      temperature: 0,
+    });
 
-    // Normalize customSplits
-    const customSplits = parsed.customSplits != null && typeof parsed.customSplits === 'object'
-      ? parsed.customSplits
-      : undefined;
+    const parsed = completion.choices[0]?.message?.parsed;
 
-    // Normalize merchant - reject "unknown" variants
-    const rawMerchant = parsed.merchant?.trim() ?? '';
-    const isUnknownMerchant = rawMerchant === '' || rawMerchant.toLowerCase() === 'unknown';
-    const category = this.normalizeCategory(parsed.category);
-    const merchant = isUnknownMerchant
-      ? this.categoryToMerchant(category)
-      : rawMerchant;
+    if (!parsed) {
+      throw new Error('Failed to parse expense from input');
+    }
+
+    const validated = this.normalize(parsed);
+    const warnings = this.checkWarnings(validated);
 
     return {
-      merchant,
-      amount: typeof parsed.amount === 'number' ? parsed.amount : parseFloat(String(parsed.amount)) || 0,
+      parsed: validated,
+      confidence: warnings.length === 0 ? 1.0 : 0.8,
+      warnings: warnings.length > 0 ? warnings : undefined,
+    };
+  }
+
+  /**
+   * Normalize parsed data to match our types
+   */
+  private normalize(parsed: ExpenseOutput): ParsedTransaction {
+    return {
+      merchant: parsed.merchant || 'Expense',
+      amount: parsed.amount,
       currency: this.normalizeCurrency(parsed.currency),
       category: this.normalizeCategory(parsed.category),
-      cardLastFour: parsed.cardLastFour ?? 'unknown',
-      date: parsed.date ?? today,
+      cardLastFour: parsed.cardLastFour || 'unknown',
+      date: parsed.date,
       location: parsed.location ?? undefined,
-      excludedParticipants: excludedParticipants != null && excludedParticipants.length > 0 ? excludedParticipants : undefined,
-      customSplits,
+      excludedParticipants: parsed.excludedParticipants.length > 0 ? parsed.excludedParticipants : undefined,
+      customSplits: parsed.customSplits ?? undefined,
     };
   }
 
-  /**
-   * Convert category to a readable merchant name when merchant is unknown
-   */
-  private categoryToMerchant(category: Category): string {
-    const categoryNames: Record<Category, string> = {
-      dining: 'Restaurant',
-      grocery: 'Grocery',
-      gas: 'Gas Station',
-      shopping: 'Shopping',
-      subscription: 'Subscription',
-      travel: 'Travel',
-      transport: 'Transport',
-      entertainment: 'Entertainment',
-      health: 'Health',
-      utilities: 'Utilities',
-      other: 'Expense',
-    };
-    return categoryNames[category] ?? 'Expense';
-  }
-
-  /**
-   * Normalize currency code
-   */
-  private normalizeCurrency(currency?: string): Currency {
-    if (!currency) return 'CAD';
-
+  private normalizeCurrency(currency: string): Currency {
     const upper = currency.toUpperCase();
     const currencyMap: Record<string, Currency> = {
-      'CAD': 'CAD',
-      'USD': 'USD',
-      'EUR': 'EUR',
-      'GBP': 'GBP',
-      'MXN': 'MXN',
-      'CRC': 'CRC',
-      'JPY': 'JPY',
-      'PESOS': 'MXN',
-      'COLONES': 'CRC',
-      'YEN': 'JPY',
+      'CAD': 'CAD', 'USD': 'USD', 'EUR': 'EUR', 'GBP': 'GBP',
+      'MXN': 'MXN', 'CRC': 'CRC', 'JPY': 'JPY',
+      'PESOS': 'MXN', 'COLONES': 'CRC', 'YEN': 'JPY',
     };
-
     return currencyMap[upper] ?? upper;
   }
 
-  /**
-   * Normalize category - keep custom categories, just clean up
-   */
-  private normalizeCategory(category?: string): Category {
-    if (!category) return 'other';
-    // Keep the original category, just lowercase and trim
+  private normalizeCategory(category: string): Category {
     return category.toLowerCase().trim() as Category;
   }
 
-  /**
-   * Check for potential issues
-   */
-  private checkWarnings(parsed: ParsedTransaction, _originalInput: string): readonly string[] {
-    // Default merchant names (when merchant couldn't be identified)
-    const defaultMerchants = [
-      'Restaurant', 'Grocery', 'Gas Station', 'Shopping', 'Subscription',
-      'Travel', 'Transport', 'Entertainment', 'Health', 'Utilities', 'Expense',
-    ];
-    const isDefaultMerchant = defaultMerchants.includes(parsed.merchant);
-
-    const warningChecks: ReadonlyArray<{ condition: boolean; message: string }> = [
+  private checkWarnings(parsed: ParsedTransaction): readonly string[] {
+    const checks = [
       { condition: parsed.amount <= 0, message: 'Amount is zero or negative' },
       { condition: parsed.amount > 10000, message: 'Unusually large amount - please verify' },
-      { condition: isDefaultMerchant, message: 'Merchant name not detected' },
-      { condition: parsed.cardLastFour === 'unknown', message: 'Card number not detected' },
     ];
-
-    return warningChecks
-      .filter(check => check.condition)
-      .map(check => check.message);
+    return checks.filter(c => c.condition).map(c => c.message);
   }
 }
 
@@ -263,9 +165,6 @@ export class TransactionParser {
 // Utility Functions
 // ============================================
 
-/**
- * Quick parse without instantiating a class
- */
 export async function parseTransaction(
   apiKey: string,
   input: string,
@@ -275,9 +174,6 @@ export async function parseTransaction(
   return parser.parseNaturalLanguage(input);
 }
 
-/**
- * Parse bank email notification
- */
 export async function parseBankEmail(
   apiKey: string,
   emailBody: string,
