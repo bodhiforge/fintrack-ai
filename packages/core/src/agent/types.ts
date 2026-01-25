@@ -153,10 +153,17 @@ export interface AwaitingConfirmationState {
   readonly targetId: string;
 }
 
+export interface AwaitingIntentClarificationState {
+  readonly type: 'awaiting_intent_clarification';
+  readonly originalText: string;
+  readonly suggestedIntent: Intent;
+}
+
 export type SessionState =
   | IdleState
   | AwaitingEditValueState
-  | AwaitingConfirmationState;
+  | AwaitingConfirmationState
+  | AwaitingIntentClarificationState;
 
 export interface Session {
   readonly userId: number;

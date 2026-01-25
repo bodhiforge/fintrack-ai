@@ -116,6 +116,9 @@ export async function executeQuery(
 
   // Sanitize sqlWhere to remove any ORDER BY/LIMIT that LLM might have included
   const sanitizedWhere = sanitizeSqlWhere(query.sqlWhere);
+  console.log('[QueryExecutor] === SQL DEBUG ===');
+  console.log('[QueryExecutor] projectId:', projectId);
+  console.log('[QueryExecutor] queryType:', query.queryType);
   console.log('[QueryExecutor] Original sqlWhere:', query.sqlWhere);
   console.log('[QueryExecutor] Sanitized sqlWhere:', sanitizedWhere);
 
@@ -163,9 +166,15 @@ export async function executeQuery(
       LIMIT ?
     `;
 
+    console.log('[QueryExecutor] Full countSql:', countSql.replace('?', `'${projectId}'`));
+    console.log('[QueryExecutor] Full dataSql:', dataSql.replace(/\?/g, (_, i) => i === 0 ? `'${projectId}'` : String(limit)));
+
     // Execute queries
     const countResult = await db.prepare(countSql).bind(projectId).first();
     const dataResult = await db.prepare(dataSql).bind(projectId, limit).all();
+
+    console.log('[QueryExecutor] countResult:', JSON.stringify(countResult));
+    console.log('[QueryExecutor] dataResult count:', dataResult.results?.length ?? 0);
 
     const transactions = (dataResult.results ?? []).map(rowToTransaction);
     const total = (countResult?.total as number) ?? 0;

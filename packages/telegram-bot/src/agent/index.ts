@@ -62,11 +62,19 @@ export async function processWithAgent(
 // Intent Routing
 // ============================================
 
+// Confidence threshold for clarification
+const CLARIFICATION_THRESHOLD = 0.7;
+
 async function routeIntent(
   text: string,
   intent: IntentResult,
   context: AgentContext
 ): Promise<AgentResult> {
+  // Low confidence → ask user to clarify (except for chat intent)
+  if (intent.confidence < CLARIFICATION_THRESHOLD && intent.intent !== 'chat') {
+    return handleLowConfidence(text, intent, context);
+  }
+
   switch (intent.intent) {
     case 'record':
       // Delegate to existing parser for recording expenses
@@ -92,6 +100,43 @@ async function routeIntent(
         input: text,
       };
   }
+}
+
+// ============================================
+// Low Confidence Handler
+// ============================================
+
+async function handleLowConfidence(
+  text: string,
+  intent: IntentResult,
+  context: AgentContext
+): Promise<AgentResult> {
+  const { user, environment } = context;
+
+  // Store the original text in session for later use
+  await updateSession(environment.DB, user.id, context.chatId, {
+    type: 'awaiting_intent_clarification',
+    originalText: text,
+    suggestedIntent: intent.intent,
+  });
+
+  // Build clarification options based on what the text looks like
+  const hasNumber = /\d/.test(text);
+  const keyboard: Array<Array<{ text: string; callback_data: string }>> = [];
+  const buttons: Array<{ text: string; callback_data: string }> = [];
+
+  if (hasNumber) {
+    buttons.push({ text: '📝 Log expense', callback_data: 'clarify_record' });
+  }
+  buttons.push({ text: '📊 Query spending', callback_data: 'clarify_query' });
+  keyboard.push(buttons);
+  keyboard.push([{ text: '❌ Cancel', callback_data: 'clarify_cancel' }]);
+
+  return {
+    type: 'select',
+    message: `🤔 I'm not sure what you meant by "${text}"\n\nWhat would you like to do?`,
+    keyboard,
+  };
 }
 
 // ============================================
@@ -123,17 +168,25 @@ async function handleQueryIntent(
   }
 
   // Build ParsedQuery directly from intent entities (no second LLM call)
+  // Use LLM-generated sqlWhere if available, otherwise build from entities
+  // Always fix the year in case LLM used wrong year (common issue)
+  const rawSqlWhere = entities.sqlWhere ?? buildSqlWhere(entities);
+  const sqlWhere = fixSqlWhereYear(rawSqlWhere);
   const parsedQuery: ParsedQuery = {
     queryType: entities.queryType ?? 'history',
     timeRange: entities.timeRange,
     category: entities.categoryFilter,
     person: entities.personFilter,
-    limit: entities.limit,
-    sqlWhere: entities.sqlWhere ?? "status IN ('confirmed', 'personal')",
+    limit: (entities.limit != null && entities.limit > 0) ? entities.limit : 50,
+    sqlWhere,
     sqlOrderBy: entities.sqlOrderBy ?? 'created_at DESC',
   };
 
-  console.log('[Agent] Query from intent:', JSON.stringify(parsedQuery, null, 2));
+  console.log('[Agent] === QUERY DEBUG ===');
+  console.log('[Agent] entities:', JSON.stringify(entities, null, 2));
+  console.log('[Agent] rawSqlWhere:', rawSqlWhere);
+  console.log('[Agent] sqlWhere (after year fix):', sqlWhere);
+  console.log('[Agent] project.id:', project.id);
 
   // Execute query
   const result = await executeQuery(parsedQuery, {
@@ -141,6 +194,8 @@ async function handleQueryIntent(
     projectId: project.id,
     defaultCurrency: project.defaultCurrency,
   });
+
+  console.log('[Agent] Query result:', JSON.stringify(result, null, 2));
 
   if (!result.success || result.data == null) {
     return {
@@ -347,6 +402,49 @@ async function handleSessionFlow(
 // ============================================
 // Helper Functions
 // ============================================
+
+/**
+ * Fix year in date string if it's obviously wrong (e.g., 2024 instead of 2026)
+ */
+function fixDateYear(dateStr: string): string {
+  const currentYear = new Date().getFullYear();
+  // Replace common wrong years with current year
+  return dateStr.replace(/\b(2024|2025)\b/g, currentYear.toString());
+}
+
+/**
+ * Fix sqlWhere to use correct year
+ */
+function fixSqlWhereYear(sqlWhere: string): string {
+  return fixDateYear(sqlWhere);
+}
+
+/**
+ * Build SQL WHERE clause from intent entities
+ */
+function buildSqlWhere(entities: IntentResult['entities']): string {
+  const conditions: string[] = ["status IN ('confirmed', 'personal')"];
+
+  // Add time range filter with year fix
+  if (entities.timeRange != null) {
+    const start = fixDateYear(entities.timeRange.start);
+    const end = fixDateYear(entities.timeRange.end);
+    conditions.push(`created_at >= '${start}'`);
+    conditions.push(`created_at < '${end}T23:59:59'`);
+  }
+
+  // Add category filter
+  if (entities.categoryFilter != null) {
+    conditions.push(`category = '${entities.categoryFilter.toLowerCase()}'`);
+  }
+
+  // Add person filter
+  if (entities.personFilter != null) {
+    conditions.push(`payer = '${entities.personFilter}'`);
+  }
+
+  return conditions.join(' AND ');
+}
 
 function getEditCallbackPrefix(field: string): string {
   const prefixes: Record<string, string> = {

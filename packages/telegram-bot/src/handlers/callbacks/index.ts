@@ -9,6 +9,7 @@ import { handleMenuCallbacks, handleProjectCallbacks, handleSettingsCallbacks, h
 import { handleCardCallbacks, handleCardAddCallback } from './cards.js';
 import { handleEditCallbacks, handleCategoryCallback } from './edit.js';
 import { handleHistoryCallbacks } from './history.js';
+import { handleClarifyCallback } from './clarify.js';
 
 // ============================================
 // Callback Router
@@ -34,6 +35,7 @@ const callbackHandlers = new Map<string, CallbackHandler>([
   ['card', handleCardCallbacks],
   ['cadd', handleCardAddCallback],
   ['hist', handleHistoryCallbacks],
+  ['clarify', handleClarifyCallback],
 ]);
 
 // ============================================

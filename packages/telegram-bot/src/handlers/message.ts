@@ -539,7 +539,7 @@ function buildClarificationKeyboard(
 // Shared Transaction Processing
 // ============================================
 
-async function processTransactionText(
+export async function processTransactionText(
   text: string,
   chatId: number,
   telegramUser: TelegramUser,

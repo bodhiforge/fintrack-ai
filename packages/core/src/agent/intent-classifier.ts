@@ -78,11 +78,11 @@ const INTENT_SYSTEM_PROMPT = `You classify user messages for an expense tracking
 4. **chat** - Greeting, unclear, or off-topic
    - Examples: "你好", "hi", "thanks", "how to use"
 
-## Today's Date
-{today}
+## CRITICAL: Today's Date
+Today is {today} (year {year}). You MUST use year {year} for ALL date calculations.
 
 ## Time Range Parsing
-Parse relative dates into YYYY-MM-DD:
+Parse relative dates into YYYY-MM-DD using today's date ({today}):
 - "这个月" / "this month" → first day of month to today
 - "上个月" / "last month" → first to last day of previous month
 - "今天" / "today" → today only
@@ -102,28 +102,32 @@ Columns: id, merchant, amount, currency, category, payer, status, is_shared, cre
 ## Category Names
 Use lowercase: dining, grocery, gas, shopping, subscription, travel, transport, entertainment, health, utilities, sports, education, other
 
-## Examples
+## Examples (use today = {today}, year = {year})
 
 Input: "coffee 5"
-Output: { intent: "record", confidence: 0.95, entities: {} }
+→ intent: "record", entities: {}
 
-Input: "这个月餐饮花了多少" (assuming today is 2024-01-24)
-Output: { intent: "query", confidence: 0.95, entities: { queryType: "total", categoryFilter: "dining", timeRange: { start: "2024-01-01", end: "2024-01-24", label: "this month" }, sqlWhere: "status IN ('confirmed', 'personal') AND category = 'dining' AND created_at >= '2024-01-01' AND created_at < '2024-01-25'", sqlOrderBy: "created_at DESC" } }
+Input: "这个月餐饮花了多少" or "how much on dining this month"
+→ intent: "query", queryType: "total", categoryFilter: "dining"
+→ timeRange: first day of current month to today (use year {year}!)
+→ sqlWhere: include status filter, category, and date range
 
 Input: "最近10笔" / "last 10 transactions"
-Output: { intent: "query", confidence: 0.95, entities: { queryType: "history", limit: 10, sqlWhere: "status IN ('confirmed', 'personal')", sqlOrderBy: "created_at DESC" } }
+→ intent: "query", queryType: "history", limit: 10
 
 Input: "spending by category"
-Output: { intent: "query", confidence: 0.95, entities: { queryType: "breakdown", sqlWhere: "status IN ('confirmed', 'personal')", sqlOrderBy: "amount DESC" } }
+→ intent: "query", queryType: "breakdown"
 
-Input: "改成50"
-Output: { intent: "modify", confidence: 0.9, entities: { modifyAction: "edit", targetField: "amount", newValue: 50, targetReference: "last" } }
+Input: "改成50" / "change to 50"
+→ intent: "modify", modifyAction: "edit", targetField: "amount", newValue: 50, targetReference: "last"
 
-Input: "删掉上一笔"
-Output: { intent: "modify", confidence: 0.95, entities: { modifyAction: "delete", targetReference: "last" } }
+Input: "删掉上一笔" / "delete the last one"
+→ intent: "modify", modifyAction: "delete", targetReference: "last"
 
-Input: "你好"
-Output: { intent: "chat", confidence: 0.95, entities: {} }`;
+Input: "你好" / "hi"
+→ intent: "chat"
+
+REMEMBER: Always use year {year} for dates!`;
 
 // ============================================
 // Intent Classifier Class
@@ -139,8 +143,12 @@ export class IntentClassifier {
   }
 
   async classify(text: string): Promise<IntentResult> {
-    const today = new Date().toISOString().split('T')[0];
-    const systemPrompt = INTENT_SYSTEM_PROMPT.replace('{today}', today);
+    const now = new Date();
+    const today = now.toISOString().split('T')[0];
+    const year = now.getFullYear().toString();
+    const systemPrompt = INTENT_SYSTEM_PROMPT
+      .replace(/{today}/g, today)
+      .replace(/{year}/g, year);
 
     try {
       const completion = await this.client.beta.chat.completions.parse({
