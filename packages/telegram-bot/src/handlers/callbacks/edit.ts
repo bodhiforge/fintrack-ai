@@ -52,11 +52,13 @@ export async function handleEditCallbacks(
   }
 
   if (field === 'cat') {
-    const categoryButtons = CATEGORIES.map(category => ({
+    const categoryButtons: Array<{ text: string; callback_data: string }> = CATEGORIES.map(category => ({
       text: category,
       callback_data: `txc_${category}_${transactionId}`,
     }));
     const keyboard = chunkArray(categoryButtons, 3);
+    // Add custom input option
+    keyboard.push([{ text: '✏️ Custom...', callback_data: `txc_custom_${transactionId}` }]);
 
     await sendMessage(chatId, '🏷️ Select category:', environment.TELEGRAM_BOT_TOKEN, {
       reply_markup: { inline_keyboard: keyboard },
@@ -101,6 +103,17 @@ export async function handleCategoryCallback(
 
   if (transaction == null) {
     await sendMessage(chatId, '❌ Transaction not found or no permission.', environment.TELEGRAM_BOT_TOKEN);
+    return;
+  }
+
+  // Handle custom category input prompt
+  if (category === 'custom') {
+    await sendMessage(
+      chatId,
+      `🏷️ Send your custom category:\n\n\`/editcat ${transactionId} your-category\``,
+      environment.TELEGRAM_BOT_TOKEN,
+      { parse_mode: 'Markdown' }
+    );
     return;
   }
 

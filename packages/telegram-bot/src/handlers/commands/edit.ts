@@ -73,6 +73,42 @@ export async function handleEditMerchant(context: CommandHandlerContext): Promis
   );
 }
 
+export async function handleEditCategory(context: CommandHandlerContext): Promise<void> {
+  const { args, chatId, project, environment } = context;
+
+  if (project == null) {
+    await sendMessage(chatId, '📁 No project selected.', environment.TELEGRAM_BOT_TOKEN);
+    return;
+  }
+
+  const [transactionId, ...categoryParts] = args;
+  const newCategory = categoryParts.join(' ').trim().toLowerCase();
+
+  if (transactionId == null || newCategory === '') {
+    await sendMessage(chatId, '❌ Usage: /editcat <txId> <category>', environment.TELEGRAM_BOT_TOKEN);
+    return;
+  }
+
+  const transaction = await environment.DB.prepare(
+    'SELECT id FROM transactions WHERE id = ? AND project_id = ?'
+  ).bind(transactionId, project.id).first();
+
+  if (transaction == null) {
+    await sendMessage(chatId, '❌ Transaction not found or no permission.', environment.TELEGRAM_BOT_TOKEN);
+    return;
+  }
+
+  await environment.DB.prepare('UPDATE transactions SET category = ? WHERE id = ?')
+    .bind(newCategory, transactionId).run();
+
+  await sendMessage(
+    chatId,
+    `✅ Category updated to *${newCategory}*`,
+    environment.TELEGRAM_BOT_TOKEN,
+    { parse_mode: 'Markdown' }
+  );
+}
+
 export async function handleEditSplit(context: CommandHandlerContext): Promise<void> {
   const { args, chatId, project, environment } = context;
 

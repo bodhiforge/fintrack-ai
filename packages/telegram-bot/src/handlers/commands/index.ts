@@ -25,7 +25,7 @@ import {
 } from './projects.js';
 import { handleBalance, handleSettle, handleHistory, handleUndo } from './balance.js';
 import { handleCards, handleAddCard, handleRemoveCard } from './cards.js';
-import { handleEditAmount, handleEditMerchant, handleEditSplit } from './edit.js';
+import { handleEditAmount, handleEditMerchant, handleEditCategory, handleEditSplit } from './edit.js';
 
 // ============================================
 // Command Context
@@ -90,6 +90,7 @@ const commandHandlers = new Map<string, CommandHandler>([
   // Edit commands
   ['/editamount', handleEditAmount],
   ['/editmerchant', handleEditMerchant],
+  ['/editcat', handleEditCategory],
   ['/editsplit', handleEditSplit],
 ]);
 
