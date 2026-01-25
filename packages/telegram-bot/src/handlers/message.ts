@@ -476,17 +476,17 @@ function generateClarificationMessage(
   const lowConfidenceFields: string[] = [];
 
   if (factors.merchant < CLARIFICATION_THRESHOLD) {
-    lowConfidenceFields.push(`商家: "${parsed.merchant}"?`);
+    lowConfidenceFields.push(`Merchant: "${parsed.merchant}"?`);
   }
   if (factors.amount < CLARIFICATION_THRESHOLD) {
-    lowConfidenceFields.push(`金额: $${parsed.amount.toFixed(2)}?`);
+    lowConfidenceFields.push(`Amount: $${parsed.amount.toFixed(2)}?`);
   }
   if (factors.category < CLARIFICATION_THRESHOLD) {
-    lowConfidenceFields.push(`类别: ${parsed.category}?`);
+    lowConfidenceFields.push(`Category: ${parsed.category}?`);
   }
 
   return lowConfidenceFields.length > 0
-    ? ['', '🤔 *请确认:*', ...lowConfidenceFields]
+    ? ['', '🤔 *Please confirm:*', ...lowConfidenceFields]
     : [];
 }
 
@@ -503,20 +503,20 @@ function buildClarificationKeyboard(
 
   // Add edit buttons for low confidence fields
   if (factors.amount < CLARIFICATION_THRESHOLD) {
-    editButtons.push({ text: '✏️ 改金额', callback_data: `txe_amt_${transactionId}` });
+    editButtons.push({ text: '✏️ Amount', callback_data: `txe_amt_${transactionId}` });
   }
   if (factors.merchant < CLARIFICATION_THRESHOLD) {
-    editButtons.push({ text: '✏️ 改商家', callback_data: `txe_mrc_${transactionId}` });
+    editButtons.push({ text: '✏️ Merchant', callback_data: `txe_mrc_${transactionId}` });
   }
   if (factors.category < CLARIFICATION_THRESHOLD) {
-    editButtons.push({ text: '✏️ 改类别', callback_data: `txe_cat_${transactionId}` });
+    editButtons.push({ text: '✏️ Category', callback_data: `txe_cat_${transactionId}` });
   }
 
   // Build keyboard rows
   const keyboard: (readonly InlineButton[])[] = [
     // First row: Confirm (this is correct) + highest priority edit
     [
-      { text: '✅ 正确', callback_data: `confirm_${transactionId}` },
+      { text: '✅ Correct', callback_data: `confirm_${transactionId}` },
       ...(editButtons.length > 0 ? [editButtons[0]] : []),
     ],
   ];

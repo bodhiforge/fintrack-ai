@@ -100,7 +100,7 @@ export async function handleHelp(context: CommandHandlerContext): Promise<void> 
     '',
     '_Examples:_',
     '"lunch 50 McDonald\'s"',
-    '"晚饭120不算小明"',
+    '"dinner 120, exclude Bob"',
   ].join('\n');
 
   await sendMessage(chatId, helpText, environment.TELEGRAM_BOT_TOKEN, {

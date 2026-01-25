@@ -91,7 +91,7 @@ export async function parseReceipt(
       'Authorization': `Bearer ${apiKey}`,
     },
     body: JSON.stringify({
-      model: 'gpt-4o-mini',  // mini 足够 OCR，成本降低 90%
+      model: 'gpt-4o-mini',  // mini is sufficient for OCR, 90% cost reduction
       messages: [
         { role: 'system', content: SYSTEM_PROMPT },
         {
