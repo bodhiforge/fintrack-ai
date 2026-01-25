@@ -34,18 +34,68 @@ AI: "Got it. $50 split between you and Bob. Alice excluded.
 
 | Feature | Status | Description |
 |---------|--------|-------------|
+| **AI Agent** | ✅ | Intent classification + natural language queries |
+| **Semantic Few-shot** | ✅ | Embedding-based retrieval for personalized parsing |
+| **Voice Input** | ✅ | Whisper transcription → Agent routing |
 | **AI Parsing** | ✅ | Natural language → structured transaction via GPT-4o-mini |
+| **Natural Language Query** | ✅ | "这个月花了多少" → instant answer |
 | **Multi-Project** | ✅ | Separate expenses by trip/event with invite codes |
 | **Smart Splitting** | ✅ | "dinner 50, exclude Alice" → auto-split |
 | **Multi-Currency** | ✅ | Per-project currency, grouped balance/settle |
 | **Location Tracking** | ✅ | AI extracts location or uses project default |
-| **Card Recommendation** | ✅ | Shows best card per transaction + relevant benefits |
-| **Card Management** | ✅ | Add/remove cards, browse by category |
+| **Card Recommendation** | 🚧 | Shows best card per transaction + relevant benefits |
 | **One-Tap Confirm** | ✅ | Telegram inline keyboards, not forms |
 | **Transaction Edit** | ✅ | Edit amount, merchant, category, split inline |
 | **Debt Simplification** | ✅ | Minimizes end-of-trip transactions |
 | **Gmail Integration** | 🚧 | Auto-parse bank email notifications |
-| **Card Referrals** | 🔜 | Recommend new cards with affiliate links |
+
+## AI Agent Architecture
+
+The bot uses an intelligent Agent pattern for natural interactions:
+
+```
+User: "这个月餐饮花了多少"
+         ↓
+┌─────────────────────────┐
+│   Intent Classifier     │ → intent: query, queryType: total
+│   (gpt-4o-mini)         │ → category: dining, timeRange: this month
+└─────────────────────────┘
+         ↓
+┌─────────────────────────┐
+│   Query Executor        │ → SQL query against D1
+└─────────────────────────┘
+         ↓
+Bot: "📊 餐饮统计
+      📅 1月1日 - 1月25日
+      💰 总计: $103.20 CAD
+      📝 2 笔交易"
+```
+
+### Intent Types
+
+| Intent | Example | Handler |
+|--------|---------|---------|
+| `record` | "coffee 5" | TransactionParser |
+| `query` | "这个月花了多少" | QueryExecutor |
+| `modify` | "改成50" | EditHandler |
+| `chat` | "你好" | GreetingResponse |
+
+### Semantic Few-shot Learning
+
+New transactions are parsed with context from similar historical data:
+
+```
+User: "basketball fee 26"
+         ↓
+┌─────────────────────────┐
+│   Vectorize Search      │ → Find "basketball fee $26 (sports)"
+│   (text-embedding-3)    │ → similarity: 0.95
+└─────────────────────────┘
+         ↓
+┌─────────────────────────┐
+│   Parser + few-shot     │ → category: sports ✓ (not "other")
+└─────────────────────────┘
+```
 
 ## Card Strategy System
 
@@ -119,10 +169,14 @@ curl https://your-worker.workers.dev/setup-webhook
 │                    Processing Layer                         │
 │  ┌────────────────────────────────────────────────────┐    │
 │  │              Cloudflare Workers (Edge)              │    │
-│  │  ┌─────────┐  ┌─────────┐  ┌─────────────────┐    │    │
-│  │  │ Parser  │  │Splitter │  │ Card Recommender│    │    │
-│  │  │  (AI)   │  │  (Algo) │  │    Engine       │    │    │
-│  │  └─────────┘  └─────────┘  └─────────────────┘    │    │
+│  │  ┌───────────────┐  ┌─────────┐  ┌─────────────┐  │    │
+│  │  │ Agent Router  │  │ Parser  │  │  Splitter   │  │    │
+│  │  │ (Intent+SQL)  │  │  (AI)   │  │   (Algo)    │  │    │
+│  │  └───────────────┘  └─────────┘  └─────────────┘  │    │
+│  │  ┌───────────────┐  ┌─────────┐  ┌─────────────┐  │    │
+│  │  │   Whisper     │  │ Vision  │  │  Embedding  │  │    │
+│  │  │   (Voice)     │  │  (OCR)  │  │  (Few-shot) │  │    │
+│  │  └───────────────┘  └─────────┘  └─────────────┘  │    │
 │  └────────────────────────────────────────────────────┘    │
 └─────────────────────────┬───────────────────────────────────┘
                           │
@@ -131,7 +185,11 @@ curl https://your-worker.workers.dev/setup-webhook
 │                    Storage Layer                            │
 │  ┌──────────────────────────────────────────────────┐      │
 │  │              Cloudflare D1 (SQLite)               │      │
-│  │  users | projects | transactions | user_cards     │      │
+│  │  users | projects | transactions | sessions       │      │
+│  └──────────────────────────────────────────────────┘      │
+│  ┌──────────────────────────────────────────────────┐      │
+│  │           Cloudflare Vectorize                    │      │
+│  │  transaction embeddings (1536-dim, cosine)        │      │
 │  └──────────────────────────────────────────────────┘      │
 └─────────────────────────────────────────────────────────────┘
 ```
@@ -141,23 +199,30 @@ curl https://your-worker.workers.dev/setup-webhook
 ```
 packages/
 ├── core/                     # Shared business logic
+│   ├── agent/                # AI Agent system
+│   │   ├── intent-classifier.ts  # Single LLM call for intent + entities + SQL
+│   │   ├── query-parser.ts       # Natural language → SQL (backup)
+│   │   └── types.ts              # Agent types
 │   ├── parser.ts             # AI transaction parsing
 │   ├── splitter.ts           # Expense splitting & debt simplification
-│   ├── cards.ts              # Credit card data model & presets
-│   ├── cardRecommender.ts    # Recommendation algorithm
-│   ├── constants.ts          # Shared constants
 │   └── types.ts              # TypeScript types
 ├── telegram-bot/             # Telegram bot worker
 │   └── src/
 │       ├── index.ts          # Entry point (HTTP routing)
-│       ├── types.ts          # Telegram-specific types
-│       ├── constants.ts      # Bot constants
+│       ├── agent/            # Agent orchestration
+│       │   ├── index.ts          # Main router
+│       │   ├── query-executor.ts # D1 query execution
+│       │   ├── session.ts        # Multi-turn state
+│       │   └── response-formatter.ts
+│       ├── services/         # AI services
+│       │   ├── embedding.ts      # Vectorize for few-shot
+│       │   ├── whisper.ts        # Voice transcription
+│       │   └── vision.ts         # Receipt OCR
 │       ├── handlers/         # Request handlers
-│       │   ├── commands/     # /menu, /balance, /cards, etc.
+│       │   ├── commands/     # /menu, /balance, etc.
 │       │   └── callbacks/    # Inline button handlers
 │       ├── db/               # Database helpers
-│       ├── telegram/         # Telegram API helpers
-│       └── utils/            # Utilities (invite codes, location)
+│       └── telegram/         # Telegram API helpers
 └── gmail-worker/             # Gmail webhook processor (WIP)
 ```
 
@@ -166,19 +231,20 @@ packages/
 - [x] **Phase 1: MVP** - AI parsing, splitting, multi-project
 - [x] **Phase 2: Card Strategy** - Recommend best card, show benefits
 - [x] **Phase 2.5: Code Quality** - Modular architecture, immutability
-- [ ] **Phase 3: Card Referrals** - Suggest new cards with affiliate links
-- [ ] **Phase 4: Gmail Integration** - Auto-parse bank emails
-- [ ] **Phase 5: Benefit Reminders** - Monthly perk notifications
+- [x] **Phase 3: Agent Architecture** - Intent routing, natural language queries
+- [x] **Phase 3.5: Semantic Few-shot** - Embedding-based personalized parsing
+- [ ] **Phase 4: Proactive Suggestions** - Anomaly detection, spending insights
+- [ ] **Phase 5: Gmail Integration** - Auto-parse bank emails
 
 ## Recent Commits
 
 | Commit | Description |
 |--------|-------------|
-| `1301612` | refactor: full codebase cleanup per Hawking standards |
-| `a8720aa` | feat: add Telegram location sharing support |
-| `81b4d16` | feat: add location-based foreign currency detection |
-| `c42c1ea` | fix: P0/P1 issues - Costco detection, remove old strategy |
-| `a008f45` | feat: add credit card recommendation system |
+| `6560410` | feat: add embedding-based semantic few-shot retrieval |
+| `bda4088` | feat: add low-confidence intent clarification dialog |
+| `706ded9` | perf: merge IntentClassifier and QueryParser into single LLM call |
+| `27db182` | feat: add Agent architecture with intent routing and query tools |
+| `ec984a5` | feat: add custom category input with /editcat command |
 
 ## License
 
