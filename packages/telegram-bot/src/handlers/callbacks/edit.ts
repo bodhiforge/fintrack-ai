@@ -38,13 +38,15 @@ export async function handleEditCallbacks(
   }
 
   const transaction = await environment.DB.prepare(
-    'SELECT id FROM transactions WHERE id = ? AND project_id = ?'
+    'SELECT id, merchant, amount, currency FROM transactions WHERE id = ? AND project_id = ?'
   ).bind(transactionId, project.id).first();
 
   if (transaction == null) {
     await sendMessage(chatId, '❌ Transaction not found or no permission.', environment.TELEGRAM_BOT_TOKEN);
     return;
   }
+
+  const txLabel = `${transaction.merchant} • $${(transaction.amount as number).toFixed(2)} ${transaction.currency}`;
 
   if (field === 'x') {
     await deleteMessage(chatId, query.message?.message_id ?? 0, environment.TELEGRAM_BOT_TOKEN);
@@ -60,7 +62,8 @@ export async function handleEditCallbacks(
     // Add custom input option
     keyboard.push([{ text: '✏️ Custom...', callback_data: `txc_custom_${transactionId}` }]);
 
-    await sendMessage(chatId, '🏷️ Select category:', environment.TELEGRAM_BOT_TOKEN, {
+    await sendMessage(chatId, `🏷️ Select category for *${transaction.merchant}*:`, environment.TELEGRAM_BOT_TOKEN, {
+      parse_mode: 'Markdown',
       reply_markup: { inline_keyboard: keyboard },
     });
   } else {
@@ -72,7 +75,7 @@ export async function handleEditCallbacks(
 
     await sendMessage(
       chatId,
-      `${prompts[field]}\n\n_Transaction ID: ${transactionId}_`,
+      `${prompts[field]}\n\n_${txLabel}_`,
       environment.TELEGRAM_BOT_TOKEN,
       { parse_mode: 'Markdown' }
     );
@@ -98,7 +101,7 @@ export async function handleCategoryCallback(
   }
 
   const transaction = await environment.DB.prepare(
-    'SELECT id FROM transactions WHERE id = ? AND project_id = ?'
+    'SELECT id, merchant, amount FROM transactions WHERE id = ? AND project_id = ?'
   ).bind(transactionId, project.id).first();
 
   if (transaction == null) {
@@ -110,7 +113,7 @@ export async function handleCategoryCallback(
   if (category === 'custom') {
     await sendMessage(
       chatId,
-      `🏷️ Send your custom category:\n\n\`/editcat ${transactionId} your-category\``,
+      `🏷️ Reply with custom category for *${transaction.merchant}*:`,
       environment.TELEGRAM_BOT_TOKEN,
       { parse_mode: 'Markdown' }
     );
