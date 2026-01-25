@@ -75,6 +75,7 @@ export interface ProjectMember {
 
 export type Currency = 'CAD' | 'USD' | 'EUR' | 'GBP' | 'MXN' | 'CRC' | 'JPY' | string;
 
+// Common categories (GPT will use these, but custom values are allowed)
 export type Category =
   | 'dining'
   | 'grocery'
@@ -86,7 +87,10 @@ export type Category =
   | 'entertainment'
   | 'health'
   | 'utilities'
-  | 'other';
+  | 'sports'
+  | 'education'
+  | 'other'
+  | string;  // Allow custom categories
 
 // ============================================
 // Splitting Types

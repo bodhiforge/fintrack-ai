@@ -15,7 +15,7 @@ Return ONLY valid JSON with these fields:
 - merchant: string (store name OR expense description - NEVER "unknown")
 - amount: number (extract the number from input, e.g., 50.00)
 - currency: string (CAD, USD, EUR, etc. Default CAD)
-- category: string (dining, grocery, gas, shopping, subscription, travel, transport, entertainment, health, utilities, other)
+- category: string (use common: dining, grocery, gas, shopping, subscription, travel, transport, entertainment, health, utilities, sports, education, other - OR create a fitting custom category)
 - cardLastFour: string (last 4 digits if mentioned, otherwise "unknown")
 - date: string (YYYY-MM-DD, default today)
 - location: string or null (city/country if mentioned)
@@ -227,18 +227,12 @@ export class TransactionParser {
   }
 
   /**
-   * Normalize category
+   * Normalize category - keep custom categories, just clean up
    */
   private normalizeCategory(category?: string): Category {
     if (!category) return 'other';
-
-    const lower = category.toLowerCase();
-    const validCategories: Category[] = [
-      'dining', 'grocery', 'gas', 'shopping', 'subscription',
-      'travel', 'transport', 'entertainment', 'health', 'utilities', 'other'
-    ];
-
-    return validCategories.includes(lower as Category) ? (lower as Category) : 'other';
+    // Keep the original category, just lowercase and trim
+    return category.toLowerCase().trim() as Category;
   }
 
   /**
