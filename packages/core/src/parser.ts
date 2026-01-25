@@ -81,12 +81,26 @@ export class TransactionParser {
    */
   async parseNaturalLanguage(
     text: string,
-    options?: { participants?: readonly string[] }
+    options?: {
+      participants?: readonly string[];
+      defaultCurrency?: string;
+      defaultLocation?: string;
+    }
   ): Promise<ParserResponse> {
-    const participantContext = options?.participants?.length
-      ? `\n\nParticipants in this group: ${options.participants.join(', ')}`
-      : '';
-    return this.parse(text + participantContext);
+    const contextParts: string[] = [];
+
+    if (options?.participants?.length) {
+      contextParts.push(`Participants in this group: ${options.participants.join(', ')}`);
+    }
+    if (options?.defaultCurrency) {
+      contextParts.push(`Default currency (use if not specified): ${options.defaultCurrency}`);
+    }
+    if (options?.defaultLocation) {
+      contextParts.push(`Default location (use if not specified): ${options.defaultLocation}`);
+    }
+
+    const context = contextParts.length > 0 ? `\n\n${contextParts.join('\n')}` : '';
+    return this.parse(text + context);
   }
 
   /**

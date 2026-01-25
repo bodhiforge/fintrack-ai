@@ -44,7 +44,7 @@
       "metadata": { "tags": ["basic"], "difficulty": "easy" }
     },
     {
-      "id": "chinese-001",
+      "id": "basic-005",
       "input": "午饭 35",
       "expected": {
         "merchant": { "exact": "午饭" },
@@ -52,27 +52,27 @@
         "currency": { "exact": "CAD" },
         "category": { "oneOf": ["dining", "food"] }
       },
-      "metadata": { "tags": ["chinese"], "difficulty": "easy" }
+      "metadata": { "tags": ["basic"], "difficulty": "easy" }
     },
     {
-      "id": "chinese-002",
+      "id": "basic-006",
       "input": "打车 30",
       "expected": {
         "merchant": { "exact": "打车" },
         "amount": { "exact": 30 },
         "category": { "exact": "transport" }
       },
-      "metadata": { "tags": ["chinese"], "difficulty": "easy" }
+      "metadata": { "tags": ["basic"], "difficulty": "easy" }
     },
     {
-      "id": "chinese-003",
+      "id": "basic-007",
       "input": "超市买菜 156.78",
       "expected": {
         "merchant": { "oneOf": ["超市买菜", "超市"] },
         "amount": { "exact": 156.78 },
         "category": { "oneOf": ["grocery", "shopping"] }
       },
-      "metadata": { "tags": ["chinese"], "difficulty": "easy" }
+      "metadata": { "tags": ["basic"], "difficulty": "easy" }
     },
     {
       "id": "currency-001",
@@ -126,7 +126,7 @@
         "amount": { "exact": 88 },
         "excludedParticipants": { "exact": ["小明"] }
       },
-      "metadata": { "tags": ["split", "chinese"], "difficulty": "medium" }
+      "metadata": { "tags": ["split"], "difficulty": "medium" }
     },
     {
       "id": "exclude-003",
@@ -157,7 +157,7 @@
         "amount": { "exact": 30 },
         "category": { "exact": "transport" }
       },
-      "metadata": { "tags": ["voice", "chinese"], "difficulty": "medium" }
+      "metadata": { "tags": ["voice"], "difficulty": "medium" }
     },
     {
       "id": "voice-003",

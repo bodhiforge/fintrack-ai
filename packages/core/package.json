@@ -18,8 +18,8 @@
     "test:watch": "vitest",
     "typecheck": "tsc --noEmit",
     "eval": "tsx eval/run-eval.ts",
-    "eval:chinese": "tsx eval/run-eval.ts --tag chinese",
-    "eval:voice": "tsx eval/run-eval.ts --tag voice"
+    "eval:voice": "tsx eval/run-eval.ts --tag voice",
+    "eval:split": "tsx eval/run-eval.ts --tag split"
   },
   "dependencies": {
     "openai": "^4.20.0",

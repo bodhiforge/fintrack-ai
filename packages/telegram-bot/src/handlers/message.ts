@@ -193,17 +193,19 @@ async function processTransactionText(
 
     const participants = await getProjectMembers(environment, project.id);
 
-    // Parse transaction with participant context for split detection
+    // Parse transaction with project context
     const parser = new TransactionParser(environment.OPENAI_API_KEY);
     const { parsed, confidence, warnings } = await parser.parseNaturalLanguage(text, {
       participants: [...participants],
+      defaultCurrency: project.defaultCurrency,
+      defaultLocation: project.defaultLocation ?? undefined,
     });
 
-    // Use project defaults if parser returned defaults
-    const currency = parsed.currency === 'CAD' ? project.defaultCurrency : parsed.currency;
+    // Parser uses project defaults, but ensure location isn't empty string
+    const currency = parsed.currency;
     const location = (parsed.location != null && parsed.location !== '')
       ? parsed.location
-      : (project.defaultLocation ?? null);
+      : null;
 
     const splitResult = splitExpense({
       totalAmount: parsed.amount,
