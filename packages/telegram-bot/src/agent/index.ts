@@ -5,9 +5,9 @@
 
 import {
   IntentClassifier,
-  QueryParser,
   type AgentResult,
   type IntentResult,
+  type ParsedQuery,
   type Session,
   type SessionState,
 } from '@fintrack-ai/core';
@@ -122,9 +122,18 @@ async function handleQueryIntent(
     };
   }
 
-  // Parse query with LLM
-  const queryParser = new QueryParser(environment.OPENAI_API_KEY);
-  const parsedQuery = await queryParser.parse(text);
+  // Build ParsedQuery directly from intent entities (no second LLM call)
+  const parsedQuery: ParsedQuery = {
+    queryType: entities.queryType ?? 'history',
+    timeRange: entities.timeRange,
+    category: entities.categoryFilter,
+    person: entities.personFilter,
+    limit: entities.limit,
+    sqlWhere: entities.sqlWhere ?? "status IN ('confirmed', 'personal')",
+    sqlOrderBy: entities.sqlOrderBy ?? 'created_at DESC',
+  };
+
+  console.log('[Agent] Query from intent:', JSON.stringify(parsedQuery, null, 2));
 
   // Execute query
   const result = await executeQuery(parsedQuery, {

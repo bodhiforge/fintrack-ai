@@ -21,6 +21,9 @@ export interface IntentEntities {
   readonly timeRange?: TimeRange;
   readonly categoryFilter?: string;
   readonly personFilter?: string;
+  readonly limit?: number;
+  readonly sqlWhere?: string;
+  readonly sqlOrderBy?: string;
 
   // Modify entities
   readonly modifyAction?: 'edit' | 'delete' | 'undo';

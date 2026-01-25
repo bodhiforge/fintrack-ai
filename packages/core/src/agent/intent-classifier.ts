@@ -28,9 +28,15 @@ const IntentSchema = z.object({
     timeRange: TimeRangeSchema.optional()
       .describe('Time range for query'),
     categoryFilter: z.string().optional()
-      .describe('Category to filter by'),
+      .describe('Category to filter by (lowercase)'),
     personFilter: z.string().optional()
       .describe('Person to filter by'),
+    limit: z.number().optional()
+      .describe('Max results for history query'),
+    sqlWhere: z.string().optional()
+      .describe('SQL WHERE clause for query intent (without WHERE keyword)'),
+    sqlOrderBy: z.string().optional()
+      .describe('SQL ORDER BY clause (without ORDER BY keyword)'),
     // Modify entities
     modifyAction: z.enum(['edit', 'delete', 'undo']).optional()
       .describe('Type of modification'),
@@ -47,40 +53,51 @@ const IntentSchema = z.object({
 // System Prompt
 // ============================================
 
-const INTENT_SYSTEM_PROMPT = `You classify user messages for an expense tracking bot.
+const INTENT_SYSTEM_PROMPT = `You classify user messages for an expense tracking bot and generate SQL for queries.
 
 ## Intents
 
 1. **record** - User wants to log a NEW expense
    - Contains: item/merchant + amount (explicit or implicit)
    - Examples: "coffee 5", "午饭 30", "uber 15", "买菜 120"
-   - Keywords: numbers with items/places
 
 2. **query** - User wants to VIEW or ANALYZE existing expenses
-   - Examples: "这个月花了多少", "餐饮统计", "谁欠谁钱", "show balance", "历史"
-   - Keywords: 多少, 统计, balance, history, 欠, settlement, 看看, 查询
+   - Examples: "这个月花了多少", "how much this month", "餐饮统计", "spending breakdown"
    - Query types:
-     - total: 总花费 ("这个月花了多少")
-     - breakdown: 按类别分组 ("餐饮统计", "各类消费")
-     - history: 交易列表 ("最近消费", "历史记录")
-     - balance: 谁欠谁 ("谁欠我钱", "balance")
-     - settlement: 结算方案 ("怎么结算", "settle")
+     - total: Sum of amounts ("这个月花了多少", "how much spent")
+     - breakdown: Group by category ("餐饮统计", "spending by category")
+     - history: Transaction list ("最近消费", "recent transactions")
+     - balance: Who owes whom ("谁欠谁钱", "balance")
+     - settlement: Settlement plan ("怎么结算", "settle")
+   - **IMPORTANT**: For query intent, you MUST generate sqlWhere and sqlOrderBy
 
 3. **modify** - User wants to CHANGE or DELETE existing data
-   - Examples: "改成50", "删掉上一笔", "撤销", "把金额改成30"
-   - Keywords: 改, 删, 撤销, undo, delete, 修改
-   - Use targetReference: "last" for 上一笔/最近的
+   - Examples: "改成50", "change to 50", "删掉上一笔", "delete the last one"
+   - Use targetReference: "last" for most recent transaction
 
 4. **chat** - Greeting, unclear, or off-topic
-   - Examples: "你好", "hi", "谢谢", "怎么用"
+   - Examples: "你好", "hi", "thanks", "how to use"
+
+## Today's Date
+{today}
 
 ## Time Range Parsing
-Today is {today}. Parse relative dates into YYYY-MM-DD:
-- "这个月" / "this month" → first day to today
+Parse relative dates into YYYY-MM-DD:
+- "这个月" / "this month" → first day of month to today
 - "上个月" / "last month" → first to last day of previous month
 - "今天" / "today" → today only
 - "这周" / "this week" → Monday to today
-- "上周" / "last week" → previous Monday to Sunday
+- No time specified → default to last 30 days
+
+## SQL Generation Rules (for query intent only)
+Database table: transactions
+Columns: id, merchant, amount, currency, category, payer, status, is_shared, created_at
+
+1. Always include: status IN ('confirmed', 'personal')
+2. Date format: created_at >= '{start}' AND created_at < '{end+1day}'
+3. Category is lowercase: category = 'dining'
+4. Do NOT include project_id (added by caller)
+5. Default order: created_at DESC
 
 ## Category Names
 Use lowercase: dining, grocery, gas, shopping, subscription, travel, transport, entertainment, health, utilities, sports, education, other
@@ -90,8 +107,14 @@ Use lowercase: dining, grocery, gas, shopping, subscription, travel, transport, 
 Input: "coffee 5"
 Output: { intent: "record", confidence: 0.95, entities: {} }
 
-Input: "这个月餐饮花了多少"
-Output: { intent: "query", confidence: 0.95, entities: { queryType: "total", categoryFilter: "dining", timeRange: { start: "2024-01-01", end: "2024-01-24", label: "这个月" } } }
+Input: "这个月餐饮花了多少" (assuming today is 2024-01-24)
+Output: { intent: "query", confidence: 0.95, entities: { queryType: "total", categoryFilter: "dining", timeRange: { start: "2024-01-01", end: "2024-01-24", label: "this month" }, sqlWhere: "status IN ('confirmed', 'personal') AND category = 'dining' AND created_at >= '2024-01-01' AND created_at < '2024-01-25'", sqlOrderBy: "created_at DESC" } }
+
+Input: "最近10笔" / "last 10 transactions"
+Output: { intent: "query", confidence: 0.95, entities: { queryType: "history", limit: 10, sqlWhere: "status IN ('confirmed', 'personal')", sqlOrderBy: "created_at DESC" } }
+
+Input: "spending by category"
+Output: { intent: "query", confidence: 0.95, entities: { queryType: "breakdown", sqlWhere: "status IN ('confirmed', 'personal')", sqlOrderBy: "amount DESC" } }
 
 Input: "改成50"
 Output: { intent: "modify", confidence: 0.9, entities: { modifyAction: "edit", targetField: "amount", newValue: 50, targetReference: "last" } }
@@ -154,6 +177,9 @@ export class IntentClassifier {
       timeRange: entities.timeRange as TimeRange | undefined,
       categoryFilter: entities.categoryFilter?.toLowerCase(),
       personFilter: entities.personFilter,
+      limit: entities.limit,
+      sqlWhere: entities.sqlWhere,
+      sqlOrderBy: entities.sqlOrderBy,
       modifyAction: entities.modifyAction,
       targetField: entities.targetField,
       newValue: entities.newValue,

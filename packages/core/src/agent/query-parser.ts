@@ -38,8 +38,8 @@ const QuerySchema = z.object({
 
 const QUERY_SYSTEM_PROMPT = `Parse expense queries into SQL-compatible filters for a D1 (SQLite) database.
 
-## Today
-{today}
+## CRITICAL: Today's Date
+Today is {today} (year {year}). You MUST use this exact year ({year}) for ALL date calculations. Do NOT use any other year.
 
 ## Database Schema
 Table: transactions
@@ -69,39 +69,26 @@ Table: transactions
 4. For shared expenses only: is_shared = 1
 5. project_id will be added by the caller - do NOT include it in sqlWhere
 
-## Time Range Examples
-- "这个月" (January 2024) → start: "2024-01-01", end: "2024-01-31"
-- "上个月" → previous month's first and last day
-- "今天" → today only
-- "这周" → Monday to today
-- No time specified → default to last 30 days
+## Time Range Calculation
+Use today's date ({today}) to calculate ranges:
+- "这个月" / "this month" → first day of current month to today
+- "上个月" / "last month" → first to last day of previous month
+- "今天" / "today" → today only
+- "这周" / "this week" → Monday of current week to today
+- No time specified → last 30 days from today
 
-## Output Examples
+## Output Examples (using today = {today})
 
 Input: "这个月餐饮花了多少"
-Output: {
-  "queryType": "total",
-  "timeRange": { "start": "2024-01-01", "end": "2024-01-31", "label": "这个月" },
-  "category": "dining",
-  "sqlWhere": "status IN ('confirmed', 'personal') AND category = 'dining' AND created_at >= datetime('2024-01-01') AND created_at < datetime('2024-02-01')",
-  "sqlOrderBy": "created_at DESC"
-}
+→ queryType: "total", category: "dining", timeRange with current month dates
 
 Input: "最近10笔消费"
-Output: {
-  "queryType": "history",
-  "limit": 10,
-  "sqlWhere": "status IN ('confirmed', 'personal')",
-  "sqlOrderBy": "created_at DESC"
-}
+→ queryType: "history", limit: 10, no timeRange filter
 
 Input: "各类消费统计"
-Output: {
-  "queryType": "breakdown",
-  "timeRange": { "start": "2023-12-25", "end": "2024-01-24", "label": "最近30天" },
-  "sqlWhere": "status IN ('confirmed', 'personal') AND created_at >= datetime('2023-12-25')",
-  "sqlOrderBy": "amount DESC"
-}`;
+→ queryType: "breakdown", timeRange for last 30 days
+
+Remember: Always use year {year} for dates!`;
 
 // ============================================
 // Query Parser Class
@@ -117,8 +104,12 @@ export class QueryParser {
   }
 
   async parse(text: string): Promise<ParsedQuery> {
-    const today = new Date().toISOString().split('T')[0];
-    const systemPrompt = QUERY_SYSTEM_PROMPT.replace(/{today}/g, today);
+    const now = new Date();
+    const today = now.toISOString().split('T')[0];
+    const year = now.getFullYear().toString();
+    const systemPrompt = QUERY_SYSTEM_PROMPT
+      .replace(/{today}/g, today)
+      .replace(/{year}/g, year);
 
     try {
       const completion = await this.client.beta.chat.completions.parse({
