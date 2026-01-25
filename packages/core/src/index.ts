@@ -39,3 +39,6 @@ export {
   type RecommendationResult,
   type CardSuggestion,
 } from './cardRecommender.js';
+
+// Agent
+export * from './agent/index.js';

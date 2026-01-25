@@ -166,8 +166,26 @@ export interface ApiResponse<T> {
   readonly error?: string;
 }
 
+export interface ConfidenceFactors {
+  readonly merchant: number;  // 0-1: How clear is the merchant name
+  readonly amount: number;    // 0-1: How clear is the amount
+  readonly category: number;  // 0-1: How confident is the category match
+}
+
 export interface ParserResponse {
   readonly parsed: ParsedTransaction;
   readonly confidence: number;
+  readonly confidenceFactors?: ConfidenceFactors;
   readonly warnings?: readonly string[];
+}
+
+// ============================================
+// Few-shot Learning Types
+// ============================================
+
+export interface HistoryExample {
+  readonly input: string;
+  readonly merchant: string;
+  readonly category: string;
+  readonly currency: string;
 }

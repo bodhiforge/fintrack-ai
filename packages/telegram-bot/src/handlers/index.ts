@@ -4,7 +4,7 @@
 
 import type { Environment, TelegramUpdate } from '../types.js';
 import { sendMessage } from '../telegram/api.js';
-import { handleTextMessage, handleLocationMessage, handleVoiceMessage } from './message.js';
+import { handleTextMessage, handleLocationMessage, handleVoiceMessage, handlePhotoMessage } from './message.js';
 import { handleCallbackQuery } from './callbacks/index.js';
 
 // ============================================
@@ -60,5 +60,8 @@ export async function handleUpdate(
     return;
   }
 
-  // TODO: Handle photo messages (receipt OCR)
+  if (update.message?.photo != null) {
+    await handlePhotoMessage(update.message, environment);
+    return;
+  }
 }
