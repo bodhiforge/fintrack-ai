@@ -283,10 +283,20 @@ async function executeModifyAction(
     ? `$${(transaction.amount as number).toFixed(2)}`
     : transaction[field] as string;
 
+  // Return with confirm/edit buttons for convenience
   return {
-    type: 'message',
-    message: `Updated *${field}*: ${oldValue} → ${formattedValue}`,
-    parseMode: 'Markdown',
+    type: 'confirm',
+    message: `✅ Updated *${field}*: ${oldValue} → ${formattedValue}\n\n_${updatedTx?.merchant} • $${(updatedTx?.amount as number).toFixed(2)}_`,
+    keyboard: [
+      [
+        { text: '✅ Confirm', callback_data: `confirm_${transactionId}` },
+        { text: '✏️ Edit', callback_data: `edit_${transactionId}` },
+      ],
+      [
+        { text: '👤 Personal', callback_data: `personal_${transactionId}` },
+        { text: '❌ Delete', callback_data: `delete_${transactionId}` },
+      ],
+    ],
   };
 }
 
