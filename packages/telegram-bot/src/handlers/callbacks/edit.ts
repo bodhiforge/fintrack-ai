@@ -8,7 +8,8 @@ import { getOrCreateUser, getCurrentProject } from '../../db/index.js';
 
 const CATEGORIES = [
   'dining', 'grocery', 'gas', 'shopping', 'subscription',
-  'travel', 'transport', 'entertainment', 'health', 'utilities', 'other',
+  'travel', 'transport', 'entertainment', 'health', 'utilities',
+  'sports', 'education', 'other',
 ] as const;
 
 function chunkArray<T>(array: readonly T[], size: number): T[][] {
