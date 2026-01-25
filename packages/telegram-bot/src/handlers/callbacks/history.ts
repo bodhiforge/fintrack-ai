@@ -5,7 +5,8 @@
 import type { CallbackQuery, Environment } from '../../types.js';
 import { sendMessage } from '../../telegram/api.js';
 import { getOrCreateUser, getCurrentProject } from '../../db/index.js';
-import { handleHistory } from '../commands/balance.js';
+import { handleHistoryPage } from '../commands/balance.js';
+import { TransactionStatus } from '../../constants.js';
 
 export async function handleHistoryCallbacks(
   query: CallbackQuery,
@@ -21,45 +22,57 @@ export async function handleHistoryCallbacks(
     const user = await getOrCreateUser(environment, telegramUser);
     const project = await getCurrentProject(environment, user.id);
 
-    await handleHistory(
+    await handleHistoryPage(
       { chatId, user, project, environment, args: [], telegramUser },
       page
     );
     return;
   }
 
-  // Handle edit prompt: hist_edit_<txIds>
+  // Handle edit prompt: hist_edit_<page>
   if (actionId.startsWith('edit_')) {
-    const txIds = actionId.replace('edit_', '').split(',');
+    const page = parseInt(actionId.replace('edit_', ''), 10) || 0;
+    const user = await getOrCreateUser(environment, telegramUser);
+    const project = await getCurrentProject(environment, user.id);
+
+    if (project == null) {
+      await sendMessage(chatId, '❌ No project selected.', environment.TELEGRAM_BOT_TOKEN);
+      return;
+    }
+
+    // Re-fetch transactions for this page
+    const pageSize = 10;
+    const offset = page * pageSize;
+    const rows = await environment.DB.prepare(`
+      SELECT id, merchant, amount FROM transactions
+      WHERE project_id = ? AND status IN (?, ?)
+      ORDER BY created_at DESC
+      LIMIT ? OFFSET ?
+    `).bind(project.id, TransactionStatus.CONFIRMED, TransactionStatus.PERSONAL, pageSize, offset).all();
+
+    if (rows.results == null || rows.results.length === 0) {
+      await sendMessage(chatId, '❌ No transactions found.', environment.TELEGRAM_BOT_TOKEN);
+      return;
+    }
+
+    // Create buttons in rows of 5
+    const buttonRows: Array<Array<{ text: string; callback_data: string }>> = [];
+    for (let i = 0; i < rows.results.length; i += 5) {
+      buttonRows.push(
+        rows.results.slice(i, i + 5).map((row: Record<string, unknown>, j: number) => ({
+          text: `${offset + i + j + 1}`,
+          callback_data: `edit_${row.id as string}`,
+        }))
+      );
+    }
 
     await sendMessage(
       chatId,
-      [
-        '✏️ *Edit Transaction*',
-        '',
-        `Reply with the number (1-${txIds.length}) to edit:`,
-        '',
-        '_Example: Send "1" to edit the first transaction_',
-      ].join('\n'),
+      '✏️ *Select transaction to edit:*',
       environment.TELEGRAM_BOT_TOKEN,
       {
         parse_mode: 'Markdown',
-        reply_markup: {
-          inline_keyboard: [
-            txIds.slice(0, 5).map((id, i) => ({
-              text: `${i + 1}`,
-              callback_data: `edit_${id}`,
-            })),
-            ...(txIds.length > 5
-              ? [
-                  txIds.slice(5, 10).map((id, i) => ({
-                    text: `${i + 6}`,
-                    callback_data: `edit_${id}`,
-                  })),
-                ]
-              : []),
-          ],
-        },
+        reply_markup: { inline_keyboard: buttonRows },
       }
     );
   }

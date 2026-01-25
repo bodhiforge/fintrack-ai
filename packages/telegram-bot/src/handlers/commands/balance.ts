@@ -126,9 +126,13 @@ export async function handleSettle(context: CommandHandlerContext): Promise<void
   await sendMessage(chatId, message, environment.TELEGRAM_BOT_TOKEN, { parse_mode: 'Markdown' });
 }
 
-export async function handleHistory(
+export async function handleHistory(context: CommandHandlerContext): Promise<void> {
+  return handleHistoryPage(context, 0);
+}
+
+export async function handleHistoryPage(
   context: CommandHandlerContext,
-  page: number = 0
+  page: number
 ): Promise<void> {
   const { chatId, project, environment } = context;
   const pageSize = 10;
@@ -181,12 +185,12 @@ export async function handleHistory(
   const hasMore = total > offset + pageSize;
   const hasPrev = page > 0;
 
-  // Build buttons
+  // Build buttons - store page number instead of all IDs (callback_data limit is 64 bytes)
   const buttons: Array<{ text: string; callback_data: string }> = [];
   if (hasPrev) {
     buttons.push({ text: '⬅️ Prev', callback_data: `hist_${page - 1}` });
   }
-  buttons.push({ text: '✏️ Edit', callback_data: `hist_edit_${txIds.join(',')}` });
+  buttons.push({ text: '✏️ Edit', callback_data: `hist_edit_${page}` });
   if (hasMore) {
     buttons.push({ text: 'More ➡️', callback_data: `hist_${page + 1}` });
   }

@@ -199,16 +199,20 @@ async function processTransactionText(
       participants: [...participants],
     });
 
+    // Use project defaults if parser returned defaults
+    const currency = parsed.currency === 'CAD' ? project.defaultCurrency : parsed.currency;
+    const location = (parsed.location != null && parsed.location !== '')
+      ? parsed.location
+      : (project.defaultLocation ?? null);
+
     const splitResult = splitExpense({
       totalAmount: parsed.amount,
-      currency: parsed.currency,
+      currency,
       payer: payerName,
       participants: [...participants],
       excludedParticipants: parsed.excludedParticipants != null ? [...parsed.excludedParticipants] : [],
       customSplits: parsed.customSplits,
     });
-
-    const location = parsed.location ?? project.defaultLocation ?? null;
     const transactionId = crypto.randomUUID();
 
     await environment.DB.prepare(`
@@ -221,7 +225,7 @@ async function processTransactionText(
       chatId,
       parsed.merchant,
       parsed.amount,
-      parsed.currency,
+      currency,
       parsed.category,
       location,
       parsed.cardLastFour ?? null,
@@ -274,7 +278,7 @@ async function processTransactionText(
       `📁 _${project.name}_`,
       '',
       `📍 ${parsed.merchant}${location != null ? ` (${location})` : ''}`,
-      `💰 $${parsed.amount.toFixed(2)} ${parsed.currency}`,
+      `💰 $${parsed.amount.toFixed(2)} ${currency}`,
       `🏷️ ${parsed.category}`,
       `📅 ${parsed.date}`,
       '',

@@ -1,0 +1,215 @@
+{
+  "version": "1.0",
+  "cases": [
+    {
+      "id": "basic-001",
+      "input": "lunch 50",
+      "expected": {
+        "merchant": { "oneOf": ["lunch", "Lunch"] },
+        "amount": { "exact": 50 },
+        "currency": { "exact": "CAD" },
+        "category": { "oneOf": ["dining", "food"] }
+      },
+      "metadata": { "tags": ["basic"], "difficulty": "easy" }
+    },
+    {
+      "id": "basic-002",
+      "input": "coffee 5.50",
+      "expected": {
+        "merchant": { "oneOf": ["coffee", "Coffee"] },
+        "amount": { "exact": 5.50 },
+        "currency": { "exact": "CAD" },
+        "category": { "oneOf": ["dining", "food", "coffee"] }
+      },
+      "metadata": { "tags": ["basic"], "difficulty": "easy" }
+    },
+    {
+      "id": "basic-003",
+      "input": "uber 25",
+      "expected": {
+        "merchant": { "oneOf": ["uber", "Uber"] },
+        "amount": { "exact": 25 },
+        "category": { "exact": "transport" }
+      },
+      "metadata": { "tags": ["basic"], "difficulty": "easy" }
+    },
+    {
+      "id": "basic-004",
+      "input": "gym membership 50",
+      "expected": {
+        "merchant": { "oneOf": ["gym membership", "Gym membership", "Gym Membership"] },
+        "amount": { "exact": 50 },
+        "category": { "oneOf": ["sports", "health", "fitness"] }
+      },
+      "metadata": { "tags": ["basic"], "difficulty": "easy" }
+    },
+    {
+      "id": "chinese-001",
+      "input": "午饭 35",
+      "expected": {
+        "merchant": { "exact": "午饭" },
+        "amount": { "exact": 35 },
+        "currency": { "exact": "CAD" },
+        "category": { "oneOf": ["dining", "food"] }
+      },
+      "metadata": { "tags": ["chinese"], "difficulty": "easy" }
+    },
+    {
+      "id": "chinese-002",
+      "input": "打车 30",
+      "expected": {
+        "merchant": { "exact": "打车" },
+        "amount": { "exact": 30 },
+        "category": { "exact": "transport" }
+      },
+      "metadata": { "tags": ["chinese"], "difficulty": "easy" }
+    },
+    {
+      "id": "chinese-003",
+      "input": "超市买菜 156.78",
+      "expected": {
+        "merchant": { "oneOf": ["超市买菜", "超市"] },
+        "amount": { "exact": 156.78 },
+        "category": { "oneOf": ["grocery", "shopping"] }
+      },
+      "metadata": { "tags": ["chinese"], "difficulty": "easy" }
+    },
+    {
+      "id": "currency-001",
+      "input": "dinner 80 usd",
+      "expected": {
+        "merchant": { "oneOf": ["dinner", "Dinner"] },
+        "amount": { "exact": 80 },
+        "currency": { "exact": "USD" }
+      },
+      "metadata": { "tags": ["currency"], "difficulty": "easy" }
+    },
+    {
+      "id": "currency-002",
+      "input": "costco 150 USD",
+      "expected": {
+        "merchant": { "oneOf": ["costco", "Costco"] },
+        "amount": { "exact": 150 },
+        "currency": { "exact": "USD" },
+        "category": { "oneOf": ["grocery", "shopping"] }
+      },
+      "metadata": { "tags": ["currency"], "difficulty": "easy" }
+    },
+    {
+      "id": "currency-003",
+      "input": "ramen 1500 yen",
+      "expected": {
+        "merchant": { "oneOf": ["ramen", "Ramen"] },
+        "amount": { "exact": 1500 },
+        "currency": { "exact": "JPY" },
+        "category": { "oneOf": ["dining", "food"] }
+      },
+      "metadata": { "tags": ["currency"], "difficulty": "medium" }
+    },
+    {
+      "id": "exclude-001",
+      "input": "dinner 120 without Bob",
+      "participants": ["Alice", "Bob", "Carol"],
+      "expected": {
+        "merchant": { "oneOf": ["dinner", "Dinner"] },
+        "amount": { "exact": 120 },
+        "excludedParticipants": { "exact": ["Bob"] }
+      },
+      "metadata": { "tags": ["split"], "difficulty": "medium" }
+    },
+    {
+      "id": "exclude-002",
+      "input": "午饭 88 不算小明",
+      "participants": ["小红", "小明", "小华"],
+      "expected": {
+        "merchant": { "exact": "午饭" },
+        "amount": { "exact": 88 },
+        "excludedParticipants": { "exact": ["小明"] }
+      },
+      "metadata": { "tags": ["split", "chinese"], "difficulty": "medium" }
+    },
+    {
+      "id": "exclude-003",
+      "input": "lunch 60 excluding Alice and Bob",
+      "participants": ["Alice", "Bob", "Carol", "Dave"],
+      "expected": {
+        "amount": { "exact": 60 },
+        "excludedParticipants": { "oneOf": [["Alice", "Bob"], ["Bob", "Alice"]] }
+      },
+      "metadata": { "tags": ["split"], "difficulty": "medium" }
+    },
+    {
+      "id": "voice-001",
+      "input": "uber to airport thirty five dollars",
+      "expected": {
+        "merchant": { "pattern": "uber" },
+        "amount": { "exact": 35 },
+        "currency": { "exact": "USD" },
+        "category": { "exact": "transport" }
+      },
+      "metadata": { "tags": ["voice"], "difficulty": "medium" }
+    },
+    {
+      "id": "voice-002",
+      "input": "刚打车花了三十块",
+      "expected": {
+        "merchant": { "pattern": "打车" },
+        "amount": { "exact": 30 },
+        "category": { "exact": "transport" }
+      },
+      "metadata": { "tags": ["voice", "chinese"], "difficulty": "medium" }
+    },
+    {
+      "id": "voice-003",
+      "input": "coffee at starbucks five fifty",
+      "expected": {
+        "merchant": { "pattern": "starbucks" },
+        "amount": { "exact": 5.50 },
+        "category": { "oneOf": ["dining", "food", "coffee"] }
+      },
+      "metadata": { "tags": ["voice"], "difficulty": "medium" }
+    },
+    {
+      "id": "complex-001",
+      "input": "dinner at Sukiya 2500 yen Tokyo",
+      "expected": {
+        "merchant": { "pattern": "sukiya" },
+        "amount": { "exact": 2500 },
+        "currency": { "exact": "JPY" },
+        "category": { "oneOf": ["dining", "food"] },
+        "location": { "pattern": "tokyo" }
+      },
+      "metadata": { "tags": ["complex"], "difficulty": "hard" }
+    },
+    {
+      "id": "complex-002",
+      "input": "groceries at T&T 89.50 without mom",
+      "participants": ["me", "mom", "dad"],
+      "expected": {
+        "merchant": { "pattern": "t&t|t and t" },
+        "amount": { "exact": 89.50 },
+        "category": { "exact": "grocery" },
+        "excludedParticipants": { "exact": ["mom"] }
+      },
+      "metadata": { "tags": ["complex", "split"], "difficulty": "hard" }
+    },
+    {
+      "id": "edge-001",
+      "input": "50",
+      "expected": {
+        "amount": { "exact": 50 },
+        "currency": { "exact": "CAD" }
+      },
+      "metadata": { "tags": ["edge"], "difficulty": "hard", "note": "Amount only, no description" }
+    },
+    {
+      "id": "edge-002",
+      "input": "netflix",
+      "expected": {
+        "merchant": { "pattern": "netflix" },
+        "category": { "oneOf": ["subscription", "entertainment"] }
+      },
+      "metadata": { "tags": ["edge"], "difficulty": "hard", "note": "Merchant only, no amount" }
+    }
+  ]
+}
