@@ -342,7 +342,7 @@ async function processReceiptTransaction(
 
   // Build keyboard based on whether clarification is needed
   const inlineKeyboard = needsClarification
-    ? buildClarificationKeyboard(transactionId, confidenceFactors)
+    ? [...buildClarificationKeyboard(transactionId, confidenceFactors), [{ text: '🏠 Menu', callback_data: 'menu_main' }]]
     : [
         [
           { text: '✅ Confirm', callback_data: `confirm_${transactionId}` },
@@ -351,6 +351,9 @@ async function processReceiptTransaction(
         [
           { text: '✏️ Edit', callback_data: `edit_${transactionId}` },
           { text: '❌ Delete', callback_data: `delete_${transactionId}` },
+        ],
+        [
+          { text: '🏠 Menu', callback_data: 'menu_main' },
         ],
       ];
 
@@ -698,7 +701,7 @@ export async function processTransactionText(
 
     // Build keyboard based on whether clarification is needed
     const inlineKeyboard = needsClarification
-      ? buildClarificationKeyboard(transactionId, confidenceFactors)
+      ? [...buildClarificationKeyboard(transactionId, confidenceFactors), [{ text: '🏠 Menu', callback_data: 'menu_main' }]]
       : [
           [
             { text: '✅ Confirm', callback_data: `confirm_${transactionId}` },
@@ -707,6 +710,9 @@ export async function processTransactionText(
           [
             { text: '✏️ Edit', callback_data: `edit_${transactionId}` },
             { text: '❌ Delete', callback_data: `delete_${transactionId}` },
+          ],
+          [
+            { text: '🏠 Menu', callback_data: 'menu_main' },
           ],
         ];
 

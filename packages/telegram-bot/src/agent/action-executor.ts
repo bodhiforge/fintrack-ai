@@ -296,6 +296,9 @@ async function executeModifyAction(
         { text: '👤 Personal', callback_data: `personal_${transactionId}` },
         { text: '❌ Delete', callback_data: `delete_${transactionId}` },
       ],
+      [
+        { text: '🏠 Menu', callback_data: 'menu_main' },
+      ],
     ],
   };
 }
@@ -367,8 +370,11 @@ async function executeDeleteAction(
     message: `Delete *${transaction.merchant}* ($${(transaction.amount as number).toFixed(2)})?`,
     keyboard: [
       [
-        { text: '✅ Confirm', callback_data: `delete_${transactionId}` },
+        { text: '✅ Yes, Delete', callback_data: `delete_${transactionId}` },
         { text: '❌ Cancel', callback_data: 'menu_main' },
+      ],
+      [
+        { text: '🏠 Menu', callback_data: 'menu_main' },
       ],
     ],
   };
