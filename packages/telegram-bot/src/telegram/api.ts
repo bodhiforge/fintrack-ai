@@ -100,6 +100,33 @@ export async function answerCallbackQuery(
 }
 
 // ============================================
+// Persistent Keyboard
+// ============================================
+
+export async function setPersistentKeyboard(
+  chatId: number,
+  token: string
+): Promise<void> {
+  // Send invisible message to set the keyboard
+  // Using a zero-width space character to make it minimal
+  await fetch(`https://api.telegram.org/bot${token}/sendMessage`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({
+      chat_id: chatId,
+      text: '⌨️',
+      reply_markup: {
+        keyboard: [
+          [{ text: '📊 Balance' }, { text: '📜 History' }, { text: '🏠 Menu' }],
+        ],
+        resize_keyboard: true,
+        is_persistent: true,
+      },
+    }),
+  });
+}
+
+// ============================================
 // Webhook Management
 // ============================================
 

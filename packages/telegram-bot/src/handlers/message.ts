@@ -387,6 +387,21 @@ export async function handleTextMessage(
     return;
   }
 
+  // Handle persistent keyboard buttons
+  const keyboardCommands: Record<string, string> = {
+    '📊 Balance': '/balance',
+    '📜 History': '/history',
+    '🏠 Menu': '/menu',
+    '💸 Settle': '/settle',
+    '📁 Projects': '/projects',
+  };
+
+  const mappedCommand = keyboardCommands[text];
+  if (mappedCommand != null) {
+    await handleCommand(mappedCommand, chatId, telegramUser, environment);
+    return;
+  }
+
   const trimmedText = text.trim();
   if (trimmedText.length < 2) {
     return;

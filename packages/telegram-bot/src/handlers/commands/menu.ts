@@ -3,7 +3,7 @@
  */
 
 import type { CommandHandlerContext } from './index.js';
-import { sendMessage } from '../../telegram/api.js';
+import { sendMessage, setPersistentKeyboard } from '../../telegram/api.js';
 import { getUserCards } from '../../db/index.js';
 
 export async function handleMenu(context: CommandHandlerContext): Promise<void> {
@@ -14,11 +14,12 @@ export async function handleMenu(context: CommandHandlerContext): Promise<void> 
   const hasCards = userCards.length > 0;
 
   if (project != null) {
-    // User has a project - show main menu
+    // User has a project - show main menu with persistent keyboard
     const cardPrompt = hasCards
       ? '💳 Cards'
       : '💳 Add Cards ⚡';
 
+    // Send menu with inline keyboard
     await sendMessage(
       chatId,
       `📁 *${project.name}*\n\nSend a message to track expenses, or tap a button:`,
@@ -41,6 +42,9 @@ export async function handleMenu(context: CommandHandlerContext): Promise<void> 
         },
       }
     );
+
+    // Set persistent reply keyboard at bottom of chat
+    await setPersistentKeyboard(chatId, environment.TELEGRAM_BOT_TOKEN);
   } else {
     // No project - show onboarding
     await sendOnboarding(chatId, user.firstName ?? 'there', environment);
