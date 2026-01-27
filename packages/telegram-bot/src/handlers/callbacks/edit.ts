@@ -113,7 +113,7 @@ export async function handleCategoryCallback(
   if (category === 'custom') {
     await sendMessage(
       chatId,
-      `🏷️ Reply with custom category for *${transaction.merchant}*:`,
+      `🏷️ Set custom category for *${transaction.merchant}*:\n\n\`/editcat ${transactionId} your-category\``,
       environment.TELEGRAM_BOT_TOKEN,
       { parse_mode: 'Markdown' }
     );
