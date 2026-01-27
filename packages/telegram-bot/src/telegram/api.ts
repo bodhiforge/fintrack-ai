@@ -112,7 +112,8 @@ export async function setPersistentKeyboard(
     headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify({
       chat_id: chatId,
-      text: '✨ Quick access ready',
+      text: '⌨️ _Tap the keyboard icon to access quick commands_',
+      parse_mode: 'Markdown',
       reply_markup: {
         keyboard: [
           [
@@ -127,7 +128,8 @@ export async function setPersistentKeyboard(
           ],
         ],
         resize_keyboard: true,
-        is_persistent: true,
+        is_persistent: false,
+        input_field_placeholder: 'coffee 5 / lunch 30...',
       },
     }),
   });
