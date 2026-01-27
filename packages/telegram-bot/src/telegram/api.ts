@@ -105,34 +105,49 @@ export async function answerCallbackQuery(
 
 export async function setPersistentKeyboard(
   chatId: number,
-  token: string
+  token: string,
+  silent: boolean = false
 ): Promise<void> {
-  await fetch(`https://api.telegram.org/bot${token}/sendMessage`, {
+  const payload: Record<string, unknown> = {
+    chat_id: chatId,
+    text: silent ? '.' : '⌨️',
+    reply_markup: {
+      keyboard: [
+        [
+          { text: '💰 Balance' },
+          { text: '💸 Settle' },
+          { text: '📜 History' },
+        ],
+        [
+          { text: '↩️ Undo' },
+          { text: '🏠 Menu' },
+          { text: '❓ Help' },
+        ],
+      ],
+      resize_keyboard: true,
+      is_persistent: false,
+      input_field_placeholder: 'coffee 5, lunch 30...',
+    },
+  };
+
+  // If silent, try to delete the message after sending
+  const response = await fetch(`https://api.telegram.org/bot${token}/sendMessage`, {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify({
-      chat_id: chatId,
-      text: '⌨️ _Tap the keyboard icon to access quick commands_',
-      parse_mode: 'Markdown',
-      reply_markup: {
-        keyboard: [
-          [
-            { text: '💰 Balance' },
-            { text: '💸 Settle' },
-            { text: '📜 History' },
-          ],
-          [
-            { text: '↩️ Undo' },
-            { text: '🏠 Menu' },
-            { text: '❓ Help' },
-          ],
-        ],
-        resize_keyboard: true,
-        is_persistent: false,
-        input_field_placeholder: 'coffee 5 / lunch 30...',
-      },
-    }),
+    body: JSON.stringify(payload),
   });
+
+  if (silent) {
+    const result = await response.json() as { result?: { message_id?: number } };
+    const messageId = result.result?.message_id;
+    if (messageId != null) {
+      await fetch(`https://api.telegram.org/bot${token}/deleteMessage`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ chat_id: chatId, message_id: messageId }),
+      });
+    }
+  }
 }
 
 // ============================================
