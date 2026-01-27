@@ -103,50 +103,39 @@ export async function answerCallbackQuery(
 // Persistent Keyboard
 // ============================================
 
-export async function setPersistentKeyboard(
+export async function setMenuButton(
   chatId: number,
-  token: string,
-  silent: boolean = false
+  token: string
 ): Promise<void> {
-  const payload: Record<string, unknown> = {
-    chat_id: chatId,
-    text: silent ? '.' : '⌨️',
-    reply_markup: {
-      keyboard: [
-        [
-          { text: '💰 Balance' },
-          { text: '💸 Settle' },
-          { text: '📜 History' },
-        ],
-        [
-          { text: '↩️ Undo' },
-          { text: '🏠 Menu' },
-          { text: '❓ Help' },
-        ],
-      ],
-      resize_keyboard: true,
-      is_persistent: true,
-    },
-  };
-
-  // If silent, try to delete the message after sending
-  const response = await fetch(`https://api.telegram.org/bot${token}/sendMessage`, {
+  // Set the menu button to show commands
+  await fetch(`https://api.telegram.org/bot${token}/setChatMenuButton`, {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify(payload),
+    body: JSON.stringify({
+      chat_id: chatId,
+      menu_button: {
+        type: 'commands',
+      },
+    }),
   });
+}
 
-  if (silent) {
-    const result = await response.json() as { result?: { message_id?: number } };
-    const messageId = result.result?.message_id;
-    if (messageId != null) {
-      await fetch(`https://api.telegram.org/bot${token}/deleteMessage`, {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ chat_id: chatId, message_id: messageId }),
-      });
-    }
-  }
+export async function setBotCommands(token: string): Promise<void> {
+  const commands = [
+    { command: 'menu', description: '🏠 Main menu' },
+    { command: 'balance', description: '💰 View balance' },
+    { command: 'history', description: '📜 Transaction history' },
+    { command: 'undo', description: '↩️ Undo last action' },
+    { command: 'new', description: '➕ Create project' },
+    { command: 'switch', description: '🔄 Switch project' },
+    { command: 'help', description: '❓ Help' },
+  ];
+
+  await fetch(`https://api.telegram.org/bot${token}/setMyCommands`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ commands }),
+  });
 }
 
 // ============================================

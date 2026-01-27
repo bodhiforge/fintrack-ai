@@ -4,7 +4,7 @@
  */
 
 import type { Environment, TelegramUpdate } from './types.js';
-import { setWebhook } from './telegram/api.js';
+import { setWebhook, setBotCommands } from './telegram/api.js';
 import { handleUpdate } from './handlers/index.js';
 import { EmbeddingService } from './services/embedding.js';
 
@@ -98,8 +98,12 @@ async function handleSetupWebhook(
   environment: Environment
 ): Promise<Response> {
   const webhookUrl = `${url.origin}/webhook`;
-  const result = await setWebhook(environment.TELEGRAM_BOT_TOKEN, webhookUrl);
-  return new Response(JSON.stringify(result), {
+  const webhookResult = await setWebhook(environment.TELEGRAM_BOT_TOKEN, webhookUrl);
+
+  // Set bot commands (Menu button will show these)
+  await setBotCommands(environment.TELEGRAM_BOT_TOKEN);
+
+  return new Response(JSON.stringify({ webhook: webhookResult, commands: 'set' }), {
     headers: { 'Content-Type': 'application/json' },
   });
 }

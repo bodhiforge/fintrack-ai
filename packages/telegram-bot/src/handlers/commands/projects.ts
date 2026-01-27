@@ -13,7 +13,34 @@ export async function handleNewProject(context: CommandHandlerContext): Promise<
 
   const projectName = args.join(' ').replace(/"/g, '').trim();
   if (projectName === '') {
-    await sendMessage(chatId, '❌ Usage: /newproject "Project Name"', environment.TELEGRAM_BOT_TOKEN);
+    // Show project type selection
+    await sendMessage(chatId, '➕ *Create New Project*\n\nChoose a type:', environment.TELEGRAM_BOT_TOKEN, {
+      parse_mode: 'Markdown',
+      reply_markup: {
+        inline_keyboard: [
+          [{ text: '📅 Monthly (Current Month)', callback_data: 'newproj_monthly' }],
+          [{ text: '✈️ Trip', callback_data: 'newproj_trip' }],
+          [{ text: '📝 Custom', callback_data: 'newproj_custom' }],
+        ],
+      },
+    });
+    return;
+  }
+
+  // Check for duplicate project name for this user
+  const existingProject = await environment.DB.prepare(`
+    SELECT p.id FROM projects p
+    JOIN project_members pm ON p.id = pm.project_id
+    WHERE pm.user_id = ? AND LOWER(p.name) = LOWER(?) AND p.is_active = 1
+  `).bind(user.id, projectName).first();
+
+  if (existingProject != null) {
+    await sendMessage(
+      chatId,
+      `❌ Project *${projectName}* already exists.\n\nUse /switch to select it or choose a different name.`,
+      environment.TELEGRAM_BOT_TOKEN,
+      { parse_mode: 'Markdown' }
+    );
     return;
   }
 
@@ -204,16 +231,38 @@ export async function handleLeave(context: CommandHandlerContext): Promise<void>
     'DELETE FROM project_members WHERE project_id = ? AND user_id = ?'
   ).bind(project.id, user.id).run();
 
-  await environment.DB.prepare(
-    'UPDATE users SET current_project_id = NULL WHERE id = ?'
-  ).bind(user.id).run();
+  // Check if user has other projects and auto-switch
+  const otherProject = await environment.DB.prepare(`
+    SELECT p.id, p.name FROM projects p
+    JOIN project_members pm ON p.id = pm.project_id
+    WHERE pm.user_id = ? AND p.is_active = 1
+    ORDER BY p.created_at DESC
+    LIMIT 1
+  `).bind(user.id).first();
 
-  await sendMessage(
-    chatId,
-    `👋 Left *${project.name}*.\n\nUse /p to see your projects or /new to create one.`,
-    environment.TELEGRAM_BOT_TOKEN,
-    { parse_mode: 'Markdown' }
-  );
+  if (otherProject != null) {
+    await environment.DB.prepare(
+      'UPDATE users SET current_project_id = ? WHERE id = ?'
+    ).bind(otherProject.id, user.id).run();
+
+    await sendMessage(
+      chatId,
+      `👋 Left *${project.name}*\n\n📁 Switched to *${otherProject.name}*`,
+      environment.TELEGRAM_BOT_TOKEN,
+      { parse_mode: 'Markdown' }
+    );
+  } else {
+    await environment.DB.prepare(
+      'UPDATE users SET current_project_id = NULL WHERE id = ?'
+    ).bind(user.id).run();
+
+    await sendMessage(
+      chatId,
+      `👋 Left *${project.name}*\n\nNo projects left. Create one with /new`,
+      environment.TELEGRAM_BOT_TOKEN,
+      { parse_mode: 'Markdown' }
+    );
+  }
 }
 
 export async function handleArchive(context: CommandHandlerContext): Promise<void> {
@@ -233,17 +282,39 @@ export async function handleArchive(context: CommandHandlerContext): Promise<voi
     'UPDATE projects SET is_active = 0 WHERE id = ?'
   ).bind(project.id).run();
 
-  await environment.DB.prepare(`
-    UPDATE users SET current_project_id = NULL
-    WHERE current_project_id = ?
-  `).bind(project.id).run();
+  // Check if user has other active projects and auto-switch
+  const otherProject = await environment.DB.prepare(`
+    SELECT p.id, p.name FROM projects p
+    JOIN project_members pm ON p.id = pm.project_id
+    WHERE pm.user_id = ? AND p.is_active = 1
+    ORDER BY p.created_at DESC
+    LIMIT 1
+  `).bind(user.id).first();
 
-  await sendMessage(
-    chatId,
-    `📦 Archived *${project.name}*.\n\nData preserved. Use /unarchive to restore.`,
-    environment.TELEGRAM_BOT_TOKEN,
-    { parse_mode: 'Markdown' }
-  );
+  if (otherProject != null) {
+    await environment.DB.prepare(
+      'UPDATE users SET current_project_id = ? WHERE id = ?'
+    ).bind(otherProject.id, user.id).run();
+
+    await sendMessage(
+      chatId,
+      `📦 Archived *${project.name}*\n\n📁 Switched to *${otherProject.name}*\n\n_Use /unarchive to restore_`,
+      environment.TELEGRAM_BOT_TOKEN,
+      { parse_mode: 'Markdown' }
+    );
+  } else {
+    await environment.DB.prepare(`
+      UPDATE users SET current_project_id = NULL
+      WHERE current_project_id = ?
+    `).bind(project.id).run();
+
+    await sendMessage(
+      chatId,
+      `📦 Archived *${project.name}*\n\nNo active projects. Create one with /new or /unarchive to restore.`,
+      environment.TELEGRAM_BOT_TOKEN,
+      { parse_mode: 'Markdown' }
+    );
+  }
 }
 
 export async function handleUnarchive(context: CommandHandlerContext): Promise<void> {
@@ -323,12 +394,34 @@ export async function handleDeleteProject(context: CommandHandlerContext): Promi
       environment.DB.prepare('DELETE FROM projects WHERE id = ?').bind(project.id),
     ]);
 
-    await sendMessage(
-      chatId,
-      `🗑️ Deleted *${project.name}*`,
-      environment.TELEGRAM_BOT_TOKEN,
-      { parse_mode: 'Markdown' }
-    );
+    // Check if user has other projects and auto-switch
+    const otherProject = await environment.DB.prepare(`
+      SELECT p.id, p.name FROM projects p
+      JOIN project_members pm ON p.id = pm.project_id
+      WHERE pm.user_id = ? AND p.is_active = 1
+      ORDER BY p.created_at DESC
+      LIMIT 1
+    `).bind(user.id).first();
+
+    if (otherProject != null) {
+      await environment.DB.prepare(
+        'UPDATE users SET current_project_id = ? WHERE id = ?'
+      ).bind(otherProject.id, user.id).run();
+
+      await sendMessage(
+        chatId,
+        `🗑️ Deleted *${project.name}*\n\n📁 Switched to *${otherProject.name}*`,
+        environment.TELEGRAM_BOT_TOKEN,
+        { parse_mode: 'Markdown' }
+      );
+    } else {
+      await sendMessage(
+        chatId,
+        `🗑️ Deleted *${project.name}*\n\nNo projects left. Create one with /new`,
+        environment.TELEGRAM_BOT_TOKEN,
+        { parse_mode: 'Markdown' }
+      );
+    }
   } catch (error) {
     console.error('Failed to delete project:', error);
     await sendMessage(

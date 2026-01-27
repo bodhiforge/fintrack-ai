@@ -387,12 +387,16 @@ export async function handleTextMessage(
     return;
   }
 
-  // Handle persistent keyboard buttons
+  // Handle persistent keyboard buttons (emoji-only and with text)
   const keyboardCommands: Record<string, string> = {
+    '🏠': '/menu',
+    '💰': '/balance',
+    '📜': '/history',
+    '↩️': '/undo',
+    '🏠 Menu': '/menu',
     '💰 Balance': '/balance',
     '📊 Balance': '/balance',
     '📜 History': '/history',
-    '🏠 Menu': '/menu',
     '💸 Settle': '/settle',
     '📁 Projects': '/projects',
     '↩️ Undo': '/undo',

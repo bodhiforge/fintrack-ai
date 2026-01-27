@@ -3,7 +3,7 @@
  */
 
 import type { CommandHandlerContext } from './index.js';
-import { sendMessage, setPersistentKeyboard } from '../../telegram/api.js';
+import { sendMessage } from '../../telegram/api.js';
 import { getUserCards } from '../../db/index.js';
 
 export async function handleMenu(context: CommandHandlerContext): Promise<void> {
@@ -22,19 +22,23 @@ export async function handleMenu(context: CommandHandlerContext): Promise<void> 
     // Send menu with inline keyboard
     await sendMessage(
       chatId,
-      `📁 *${project.name}*\n\nSend a message to track expenses, or tap a button:`,
+      `📁 *${project.name}*`,
       environment.TELEGRAM_BOT_TOKEN,
       {
         parse_mode: 'Markdown',
         reply_markup: {
           inline_keyboard: [
             [
+              { text: '🔄 Switch', callback_data: 'proj_switch' },
+              { text: '➕ New', callback_data: 'proj_new' },
+              { text: '⚙️ Settings', callback_data: 'proj_settings' },
+            ],
+            [
               { text: '📊 Balance', callback_data: 'menu_balance' },
               { text: '💸 Settle', callback_data: 'menu_settle' },
               { text: '📜 History', callback_data: 'menu_history' },
             ],
             [
-              { text: '📁 Projects', callback_data: 'menu_projects' },
               { text: cardPrompt, callback_data: 'menu_cards' },
               { text: '❓ Help', callback_data: 'menu_help' },
             ],
@@ -43,8 +47,6 @@ export async function handleMenu(context: CommandHandlerContext): Promise<void> 
       }
     );
 
-    // Set persistent reply keyboard at bottom of chat
-    await setPersistentKeyboard(chatId, environment.TELEGRAM_BOT_TOKEN);
   } else {
     // No project - show onboarding
     await sendOnboarding(chatId, user.firstName ?? 'there', environment);

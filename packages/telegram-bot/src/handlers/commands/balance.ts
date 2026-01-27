@@ -45,28 +45,46 @@ export async function handleBalance(context: CommandHandlerContext): Promise<voi
 
   const byCurrency = groupTransactionsByCurrency(transactions);
 
-  const currencyBalanceLines = Object.entries(byCurrency).flatMap(([currency, currencyTransactions]) => {
-    const balances = calculateBalances(currencyTransactions);
-    if (balances.length === 0) return [];
+  const currencySections = Object.entries(byCurrency).map(([currency, currencyTransactions]) => {
+    // Calculate summary stats
+    const totalSpent = currencyTransactions.reduce((sum, t) => sum + t.amount, 0);
+    const paidByPerson = currencyTransactions.reduce<Record<string, number>>((accumulator, t) => ({
+      ...accumulator,
+      [t.payer]: (accumulator[t.payer] ?? 0) + t.amount,
+    }), {});
 
-    const balanceLines = balances.map(balance => {
-      const emoji = balance.netBalance > 0 ? '💚' : '🔴';
-      const status = balance.netBalance > 0 ? 'is owed' : 'owes';
-      return `${emoji} ${balance.person} ${status} $${Math.abs(balance.netBalance).toFixed(2)}`;
-    });
+    // Format paid by lines
+    const paidByLines = Object.entries(paidByPerson)
+      .sort(([, a], [, b]) => b - a)
+      .map(([person, amount]) => {
+        const percentage = Math.round((amount / totalSpent) * 100);
+        return `  • ${person}: $${amount.toFixed(2)} (${percentage}%)`;
+      });
 
-    return ['', `*${currency}:*`, ...balanceLines];
+    return {
+      currency,
+      totalSpent,
+      paidByLines,
+    };
   });
 
-  if (currencyBalanceLines.length === 0) {
+  if (currencySections.length === 0) {
     await sendMessage(chatId, '📊 All balanced! No one owes anything.', environment.TELEGRAM_BOT_TOKEN);
     return;
   }
 
-  const message = [
-    `📊 *${project.name} Balances*`,
-    ...currencyBalanceLines,
-  ].join('\n');
+  const messageLines = [`📊 *${project.name} Summary*`, ''];
+
+  currencySections.forEach(section => {
+    messageLines.push(`*${section.currency}:*`);
+    messageLines.push(`Total: $${section.totalSpent.toFixed(2)}`);
+    messageLines.push('');
+    messageLines.push('Paid by:');
+    messageLines.push(...section.paidByLines);
+    messageLines.push('');
+  });
+
+  const message = messageLines.join('\n');
 
   await sendMessage(chatId, message, environment.TELEGRAM_BOT_TOKEN, { parse_mode: 'Markdown' });
 }
@@ -180,7 +198,9 @@ export async function handleHistoryPage(
     const status = row.status === TransactionStatus.PERSONAL ? '👤' : '✅';
     const num = offset + index + 1;
     const category = row.category as string;
-    return `${num}. ${status} ${date} | ${row.merchant} | ${category} | $${(row.amount as number).toFixed(2)}`;
+    const payer = row.payer as string;
+    const payerTag = row.status === TransactionStatus.PERSONAL ? '' : ` | ${payer}`;
+    return `${num}. ${status} ${date} | ${row.merchant} | ${category} | $${(row.amount as number).toFixed(2)}${payerTag}`;
   });
 
   const hasMore = total > offset + pageSize;
