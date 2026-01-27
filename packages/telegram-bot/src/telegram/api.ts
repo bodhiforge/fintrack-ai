@@ -126,7 +126,6 @@ export async function setPersistentKeyboard(
       ],
       resize_keyboard: true,
       is_persistent: false,
-      input_field_placeholder: 'coffee 5, lunch 30...',
     },
   };
 
