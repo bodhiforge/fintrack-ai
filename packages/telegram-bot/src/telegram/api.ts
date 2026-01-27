@@ -107,17 +107,24 @@ export async function setPersistentKeyboard(
   chatId: number,
   token: string
 ): Promise<void> {
-  // Send invisible message to set the keyboard
-  // Using a zero-width space character to make it minimal
   await fetch(`https://api.telegram.org/bot${token}/sendMessage`, {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify({
       chat_id: chatId,
-      text: '⌨️',
+      text: '✨ Quick access ready',
       reply_markup: {
         keyboard: [
-          [{ text: '📊 Balance' }, { text: '📜 History' }, { text: '🏠 Menu' }],
+          [
+            { text: '💰 Balance' },
+            { text: '💸 Settle' },
+            { text: '📜 History' },
+          ],
+          [
+            { text: '↩️ Undo' },
+            { text: '🏠 Menu' },
+            { text: '❓ Help' },
+          ],
         ],
         resize_keyboard: true,
         is_persistent: true,

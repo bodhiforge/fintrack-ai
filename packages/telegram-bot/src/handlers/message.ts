@@ -389,11 +389,14 @@ export async function handleTextMessage(
 
   // Handle persistent keyboard buttons
   const keyboardCommands: Record<string, string> = {
+    '💰 Balance': '/balance',
     '📊 Balance': '/balance',
     '📜 History': '/history',
     '🏠 Menu': '/menu',
     '💸 Settle': '/settle',
     '📁 Projects': '/projects',
+    '↩️ Undo': '/undo',
+    '❓ Help': '/help',
   };
 
   const mappedCommand = keyboardCommands[text];
