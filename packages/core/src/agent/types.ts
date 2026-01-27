@@ -159,11 +159,18 @@ export interface AwaitingIntentClarificationState {
   readonly suggestedIntent: Intent;
 }
 
+export interface AwaitingCategoryState {
+  readonly type: 'awaiting_category';
+  readonly transactionId: string;
+  readonly merchant: string;
+}
+
 export type SessionState =
   | IdleState
   | AwaitingEditValueState
   | AwaitingConfirmationState
-  | AwaitingIntentClarificationState;
+  | AwaitingIntentClarificationState
+  | AwaitingCategoryState;
 
 export interface Session {
   readonly userId: number;

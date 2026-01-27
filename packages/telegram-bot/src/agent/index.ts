@@ -160,6 +160,23 @@ async function handleSessionFlow(
       return processWithAgent(text, context);
     }
 
+    case 'awaiting_category': {
+      // User is replying with custom category
+      const newCategory = text.trim().toLowerCase();
+      await clearSession(environment.DB, user.id, chatId);
+
+      // Update the transaction
+      await environment.DB.prepare(
+        'UPDATE transactions SET category = ? WHERE id = ?'
+      ).bind(newCategory, state.transactionId).run();
+
+      return {
+        type: 'message',
+        message: `✅ Category updated to *${newCategory}* for ${state.merchant}`,
+        parseMode: 'Markdown',
+      };
+    }
+
     default:
       // Clear invalid session
       await clearSession(environment.DB, user.id, chatId);

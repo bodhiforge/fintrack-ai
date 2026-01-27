@@ -5,6 +5,7 @@
 import type { CallbackQuery, Environment } from '../../types.js';
 import { sendMessage, editMessageText, deleteMessage } from '../../telegram/api.js';
 import { getOrCreateUser, getCurrentProject } from '../../db/index.js';
+import { updateSession } from '../../agent/session.js';
 
 const CATEGORIES = [
   'dining', 'grocery', 'gas', 'shopping', 'subscription',
@@ -111,9 +112,16 @@ export async function handleCategoryCallback(
 
   // Handle custom category input prompt
   if (category === 'custom') {
+    // Set session to await category input
+    await updateSession(environment.DB, user.id, chatId, {
+      type: 'awaiting_category',
+      transactionId,
+      merchant: transaction.merchant as string,
+    });
+
     await sendMessage(
       chatId,
-      `🏷️ Set custom category for *${transaction.merchant}*:\n\n\`/editcat ${transactionId} your-category\``,
+      `🏷️ Reply with custom category for *${transaction.merchant}*:`,
       environment.TELEGRAM_BOT_TOKEN,
       { parse_mode: 'Markdown' }
     );
