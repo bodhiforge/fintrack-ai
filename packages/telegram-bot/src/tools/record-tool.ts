@@ -9,7 +9,7 @@
 
 import { z } from 'zod';
 import { TransactionParser, splitExpense } from '@fintrack-ai/core';
-import type { Tool, PiToolResult, PiToolContextWithDb } from '@fintrack-ai/core';
+import type { Tool, PiToolResult, PiToolContextWithDb, AgentResult } from '@fintrack-ai/core';
 import type { LastTransaction } from '@fintrack-ai/core';
 import { TransactionStatus } from '../constants.js';
 import { getSimilarExamples, getRecentExamples } from '../db/index.js';
@@ -213,5 +213,36 @@ export const recordTool: Tool<RecordParams, RecordDetails, D1Database> = {
         error: error instanceof Error ? error.message : 'Unknown error',
       };
     }
+  },
+
+  toAgentResult(result: PiToolResult<RecordDetails>): AgentResult {
+    if (!result.success) {
+      return { type: 'error', message: result.content };
+    }
+
+    const details = result.details;
+    if (details == null) {
+      return { type: 'message', message: result.content };
+    }
+
+    const splitSummary = Object.entries(details.splits)
+      .map(([person, share]) => `${person}: $${share.toFixed(2)}`)
+      .join(', ');
+
+    return {
+      type: 'confirm',
+      message: `*${details.merchant}* $${details.amount.toFixed(2)} ${details.currency}\n${details.category} | ${splitSummary}`,
+      keyboard: [
+        [
+          { text: '\u2705 Confirm', callback_data: `confirm_${details.transactionId}` },
+          { text: '\u270f\ufe0f Edit', callback_data: `edit_${details.transactionId}` },
+        ],
+        [
+          { text: '\ud83d\udc64 Personal', callback_data: `personal_${details.transactionId}` },
+          { text: '\u274c Delete', callback_data: `delete_${details.transactionId}` },
+        ],
+        [{ text: '\ud83c\udfe0 Menu', callback_data: 'menu_main' }],
+      ],
+    };
   },
 };

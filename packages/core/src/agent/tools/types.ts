@@ -10,7 +10,7 @@
  */
 
 import { z } from 'zod';
-import type { WorkingMemory } from '../types.js';
+import type { AgentResult, WorkingMemory } from '../types.js';
 
 // ============================================
 // Pi-style Tool Context (execution environment)
@@ -89,6 +89,12 @@ export interface Tool<
     args: TParams,
     context: PiToolContextWithDb<TDatabase>
   ): Promise<PiToolResult<TDetails>>;
+
+  /**
+   * Convert tool result to AgentResult for Telegram display
+   * Each tool knows how to present itself — no central switch/case needed
+   */
+  toAgentResult(result: PiToolResult<TDetails>): AgentResult;
 }
 
 // ============================================

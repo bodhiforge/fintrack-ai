@@ -8,7 +8,7 @@
  */
 
 import { z } from 'zod';
-import type { Tool, PiToolResult, PiToolContextWithDb, QueryType, ParsedQuery, QuerySummary, Transaction } from '@fintrack-ai/core';
+import type { Tool, PiToolResult, PiToolContextWithDb, AgentResult, QueryType, ParsedQuery, QuerySummary, Transaction } from '@fintrack-ai/core';
 import { executeQuery } from '../agent/query-executor.js';
 import { formatQueryResponse } from '../agent/response-formatter.js';
 
@@ -189,5 +189,22 @@ export const queryTool: Tool<QueryParams, QueryDetails, D1Database> = {
         error: error instanceof Error ? error.message : 'Unknown error',
       };
     }
+  },
+
+  toAgentResult(result: PiToolResult<QueryDetails>): AgentResult {
+    if (!result.success) {
+      return { type: 'error', message: result.content };
+    }
+
+    const details = result.details;
+    if (details?.formattedMessage != null) {
+      return {
+        type: 'message',
+        message: details.formattedMessage,
+        parseMode: 'Markdown',
+      };
+    }
+
+    return { type: 'message', message: result.content };
   },
 };

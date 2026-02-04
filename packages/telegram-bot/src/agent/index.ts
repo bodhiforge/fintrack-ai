@@ -15,7 +15,6 @@ import { getSession, clearSession, isIdleSession } from './session.js';
 import { getWorkingMemory, addMessage, extendMemoryTTL } from './memory-session.js';
 import { getProjectMembers } from '../db/index.js';
 import { getToolRegistry } from '../tools/index.js';
-import { convertToolResult } from './result-converter.js';
 
 // ============================================
 // Agent Context
@@ -111,12 +110,10 @@ export async function processWithAgent(
     payerName,
   };
 
-  // Parse and execute tool
+  // Parse, execute, convert — each tool knows how to present itself
   const args = tool.parameters.parse(decision.toolArguments);
   const toolResult = await tool.execute(args, toolContext);
-
-  // Convert tool result to AgentResult
-  const result = convertToolResult(decision.toolName, toolResult);
+  const result = tool.toAgentResult(toolResult);
 
   // Add assistant response to memory (for non-delegate results)
   if (result.type === 'message' || result.type === 'error') {
