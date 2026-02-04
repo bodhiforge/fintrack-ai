@@ -8,7 +8,7 @@
  */
 
 import { z } from 'zod';
-import type { Tool, PiToolResult, PiToolContextWithDb } from '@fintrack-ai/core';
+import type { Tool, PiToolResult, PiToolContextWithDb, AgentResult } from '@fintrack-ai/core';
 import { findLastTransaction } from '../agent/query-executor.js';
 import { TransactionStatus } from '../constants.js';
 
@@ -131,5 +131,35 @@ export const deleteTool: Tool<DeleteParams, DeleteDetails, D1Database> = {
         error: error instanceof Error ? error.message : 'Unknown error',
       };
     }
+  },
+
+  toAgentResult(result: PiToolResult<DeleteDetails>): AgentResult {
+    if (!result.success) {
+      return { type: 'error', message: result.content };
+    }
+
+    const details = result.details;
+    if (details == null) {
+      return { type: 'message', message: result.content };
+    }
+
+    if (details.needsConfirmation) {
+      return {
+        type: 'confirm',
+        message: `Delete *${details.merchant}* ($${details.amount.toFixed(2)})?`,
+        keyboard: [
+          [
+            { text: '\u2705 Yes, Delete', callback_data: `delete_${details.transactionId}` },
+            { text: '\u274c Cancel', callback_data: 'menu_main' },
+          ],
+          [{ text: '\ud83c\udfe0 Menu', callback_data: 'menu_main' }],
+        ],
+      };
+    }
+
+    return {
+      type: 'message',
+      message: `\u2705 Deleted: ${details.merchant} ($${details.amount.toFixed(2)})`,
+    };
   },
 };

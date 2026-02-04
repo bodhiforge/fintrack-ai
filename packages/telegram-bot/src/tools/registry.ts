@@ -1,19 +1,13 @@
 /**
  * Tool Registry
  * Manages tool registration and provides OpenAI-compatible definitions
- *
- * Pi Agent-inspired implementation with:
- * - Centralized tool management
- * - OpenAI function calling format export
  */
 
 import { zodToJsonSchema } from 'zod-to-json-schema';
 import type { Tool, ToolDefinition } from '@fintrack-ai/core';
 import { recordTool } from './record-tool.js';
 import { queryTool } from './query-tool.js';
-import { modifyAmountTool } from './modify-amount-tool.js';
-import { modifyMerchantTool } from './modify-merchant-tool.js';
-import { modifyCategoryTool } from './modify-category-tool.js';
+import { modifyAmountTool, modifyMerchantTool, modifyCategoryTool } from './modify-tool-factory.js';
 import { deleteTool } from './delete-tool.js';
 
 // ============================================
@@ -24,7 +18,6 @@ export class ToolRegistry {
   private readonly tools: Map<string, Tool> = new Map();
 
   constructor() {
-    // Register built-in tools
     this.register(recordTool);
     this.register(queryTool);
     this.register(modifyAmountTool);
@@ -33,32 +26,20 @@ export class ToolRegistry {
     this.register(deleteTool);
   }
 
-  /**
-   * Register a tool
-   */
   register<TParams, TDetails, TDatabase>(
     tool: Tool<TParams, TDetails, TDatabase>
   ): void {
     this.tools.set(tool.name, tool as Tool);
   }
 
-  /**
-   * Get a tool by name
-   */
   get(name: string): Tool | undefined {
     return this.tools.get(name);
   }
 
-  /**
-   * Get all registered tools
-   */
   getAll(): readonly Tool[] {
     return [...this.tools.values()];
   }
 
-  /**
-   * Get tool definitions for OpenAI function calling
-   */
   getForLLM(): readonly ToolDefinition[] {
     return this.getAll().map(tool => ({
       type: 'function' as const,
@@ -73,9 +54,6 @@ export class ToolRegistry {
     }));
   }
 
-  /**
-   * Get tool names
-   */
   getNames(): readonly string[] {
     return [...this.tools.keys()];
   }
@@ -87,9 +65,6 @@ export class ToolRegistry {
 
 let registryInstance: ToolRegistry | null = null;
 
-/**
- * Get the global tool registry instance
- */
 export function getToolRegistry(): ToolRegistry {
   if (registryInstance == null) {
     registryInstance = new ToolRegistry();
@@ -97,9 +72,6 @@ export function getToolRegistry(): ToolRegistry {
   return registryInstance;
 }
 
-/**
- * Create a new tool registry (for testing)
- */
 export function createToolRegistry(): ToolRegistry {
   return new ToolRegistry();
 }
