@@ -6,7 +6,10 @@
 // Types
 export * from './types.js';
 
-// Intent Classification
+// Memory Agent
+export { MemoryAgent, type MemoryAgentOptions } from './memory-agent.js';
+
+// Intent Classification (legacy, kept for compatibility)
 export { IntentClassifier } from './intent-classifier.js';
 
 // Query Parsing

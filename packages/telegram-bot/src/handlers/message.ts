@@ -19,6 +19,8 @@ import { handleCommand } from './commands/index.js';
 import { transcribeAudio, downloadTelegramFile } from '../services/whisper.js';
 import { parseReceipt, blobToBase64, getMimeType } from '../services/vision.js';
 import { processWithAgent, type AgentContext } from '../agent/index.js';
+import { updateMemoryAfterTransaction } from '../agent/memory-session.js';
+import type { LastTransaction } from '@fintrack-ai/core';
 
 // ============================================
 // Location Message Handler
@@ -267,6 +269,7 @@ async function processReceiptTransaction(
   });
 
   const transactionId = crypto.randomUUID();
+  const createdAt = new Date().toISOString();
 
   await environment.DB.prepare(`
     INSERT INTO transactions (id, project_id, user_id, chat_id, merchant, amount, currency, category, location, card_last_four, payer, is_shared, splits, status, created_at, raw_input)
@@ -286,9 +289,20 @@ async function processReceiptTransaction(
     1,
     JSON.stringify(splitResult.shares),
     TransactionStatus.PENDING,
-    new Date().toISOString(),
+    createdAt,
     '[receipt image]'
   ).run();
+
+  // Update working memory with the new transaction
+  const lastTransaction: LastTransaction = {
+    id: transactionId,
+    merchant: receiptData.merchant,
+    amount: receiptData.amount,
+    currency,
+    category,
+    createdAt,
+  };
+  await updateMemoryAfterTransaction(environment.DB, user.id, chatId, lastTransaction, '[receipt image]');
 
   const splitLines = Object.entries(splitResult.shares)
     .map(([person, share]) => `  ${person}: $${share.toFixed(2)}`);
@@ -328,7 +342,7 @@ async function processReceiptTransaction(
 
   // Build keyboard based on whether clarification is needed
   const inlineKeyboard = needsClarification
-    ? buildClarificationKeyboard(transactionId, confidenceFactors)
+    ? [...buildClarificationKeyboard(transactionId, confidenceFactors), [{ text: '🏠 Menu', callback_data: 'menu_main' }]]
     : [
         [
           { text: '✅ Confirm', callback_data: `confirm_${transactionId}` },
@@ -337,6 +351,9 @@ async function processReceiptTransaction(
         [
           { text: '✏️ Edit', callback_data: `edit_${transactionId}` },
           { text: '❌ Delete', callback_data: `delete_${transactionId}` },
+        ],
+        [
+          { text: '🏠 Menu', callback_data: 'menu_main' },
         ],
       ];
 
@@ -367,6 +384,28 @@ export async function handleTextMessage(
   // Command handling
   if (text.startsWith('/')) {
     await handleCommand(text, chatId, telegramUser, environment);
+    return;
+  }
+
+  // Handle persistent keyboard buttons (emoji-only and with text)
+  const keyboardCommands: Record<string, string> = {
+    '🏠': '/menu',
+    '💰': '/balance',
+    '📜': '/history',
+    '↩️': '/undo',
+    '🏠 Menu': '/menu',
+    '💰 Balance': '/balance',
+    '📊 Balance': '/balance',
+    '📜 History': '/history',
+    '💸 Settle': '/settle',
+    '📁 Projects': '/projects',
+    '↩️ Undo': '/undo',
+    '❓ Help': '/help',
+  };
+
+  const mappedCommand = keyboardCommands[text];
+  if (mappedCommand != null) {
+    await handleCommand(mappedCommand, chatId, telegramUser, environment);
     return;
   }
 
@@ -604,6 +643,8 @@ export async function processTransactionText(
     });
     const transactionId = crypto.randomUUID();
 
+    const createdAt = new Date().toISOString();
+
     await environment.DB.prepare(`
       INSERT INTO transactions (id, project_id, user_id, chat_id, merchant, amount, currency, category, location, card_last_four, payer, is_shared, splits, status, created_at, raw_input)
       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
@@ -622,9 +663,20 @@ export async function processTransactionText(
       1,
       JSON.stringify(splitResult.shares),
       TransactionStatus.PENDING,
-      new Date().toISOString(),
+      createdAt,
       text
     ).run();
+
+    // Update working memory with the new transaction
+    const lastTransaction: LastTransaction = {
+      id: transactionId,
+      merchant: parsed.merchant,
+      amount: parsed.amount,
+      currency,
+      category: parsed.category,
+      createdAt,
+    };
+    await updateMemoryAfterTransaction(environment.DB, user.id, chatId, lastTransaction, text);
 
     const splitLines = Object.entries(splitResult.shares)
       .map(([person, share]) => `  ${person}: $${share.toFixed(2)}`);
@@ -671,7 +723,7 @@ export async function processTransactionText(
 
     // Build keyboard based on whether clarification is needed
     const inlineKeyboard = needsClarification
-      ? buildClarificationKeyboard(transactionId, confidenceFactors)
+      ? [...buildClarificationKeyboard(transactionId, confidenceFactors), [{ text: '🏠 Menu', callback_data: 'menu_main' }]]
       : [
           [
             { text: '✅ Confirm', callback_data: `confirm_${transactionId}` },
@@ -680,6 +732,9 @@ export async function processTransactionText(
           [
             { text: '✏️ Edit', callback_data: `edit_${transactionId}` },
             { text: '❌ Delete', callback_data: `delete_${transactionId}` },
+          ],
+          [
+            { text: '🏠 Menu', callback_data: 'menu_main' },
           ],
         ];
 

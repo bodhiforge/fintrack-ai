@@ -14,26 +14,31 @@ export async function handleMenu(context: CommandHandlerContext): Promise<void> 
   const hasCards = userCards.length > 0;
 
   if (project != null) {
-    // User has a project - show main menu
+    // User has a project - show main menu with persistent keyboard
     const cardPrompt = hasCards
       ? '💳 Cards'
       : '💳 Add Cards ⚡';
 
+    // Send menu with inline keyboard
     await sendMessage(
       chatId,
-      `📁 *${project.name}*\n\nSend a message to track expenses, or tap a button:`,
+      `📁 *${project.name}*`,
       environment.TELEGRAM_BOT_TOKEN,
       {
         parse_mode: 'Markdown',
         reply_markup: {
           inline_keyboard: [
             [
+              { text: '🔄 Switch', callback_data: 'proj_switch' },
+              { text: '➕ New', callback_data: 'proj_new' },
+              { text: '⚙️ Settings', callback_data: 'proj_settings' },
+            ],
+            [
               { text: '📊 Balance', callback_data: 'menu_balance' },
               { text: '💸 Settle', callback_data: 'menu_settle' },
               { text: '📜 History', callback_data: 'menu_history' },
             ],
             [
-              { text: '📁 Projects', callback_data: 'menu_projects' },
               { text: cardPrompt, callback_data: 'menu_cards' },
               { text: '❓ Help', callback_data: 'menu_help' },
             ],
@@ -41,6 +46,7 @@ export async function handleMenu(context: CommandHandlerContext): Promise<void> 
         },
       }
     );
+
   } else {
     // No project - show onboarding
     await sendOnboarding(chatId, user.firstName ?? 'there', environment);

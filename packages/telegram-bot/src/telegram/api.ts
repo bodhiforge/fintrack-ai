@@ -100,6 +100,45 @@ export async function answerCallbackQuery(
 }
 
 // ============================================
+// Persistent Keyboard
+// ============================================
+
+export async function setMenuButton(
+  chatId: number,
+  token: string
+): Promise<void> {
+  // Set the menu button to show commands
+  await fetch(`https://api.telegram.org/bot${token}/setChatMenuButton`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({
+      chat_id: chatId,
+      menu_button: {
+        type: 'commands',
+      },
+    }),
+  });
+}
+
+export async function setBotCommands(token: string): Promise<void> {
+  const commands = [
+    { command: 'menu', description: '🏠 Main menu' },
+    { command: 'balance', description: '💰 View balance' },
+    { command: 'history', description: '📜 Transaction history' },
+    { command: 'undo', description: '↩️ Undo last action' },
+    { command: 'new', description: '➕ Create project' },
+    { command: 'switch', description: '🔄 Switch project' },
+    { command: 'help', description: '❓ Help' },
+  ];
+
+  await fetch(`https://api.telegram.org/bot${token}/setMyCommands`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ commands }),
+  });
+}
+
+// ============================================
 // Webhook Management
 // ============================================
 

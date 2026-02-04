@@ -54,33 +54,24 @@ function rowToTransaction(row: Readonly<Record<string, unknown>>): Transaction {
  * The LLM sometimes includes these in sqlWhere by mistake
  */
 function sanitizeSqlWhere(sqlWhere: string): string {
-  let result = sqlWhere;
-
   // Remove semicolons (prevents multiple statement injection)
-  result = result.replace(/;/g, '');
+  const noSemicolons = sqlWhere.replace(/;/g, '');
 
-  // Remove ORDER BY and everything after it
-  const orderByIndex = result.toUpperCase().indexOf('ORDER BY');
-  if (orderByIndex !== -1) {
-    result = result.substring(0, orderByIndex).trim();
-  }
+  // Find earliest occurrence of clauses that don't belong in WHERE
+  const upperCase = noSemicolons.toUpperCase();
+  const clausePositions = ['ORDER BY', 'LIMIT', 'GROUP BY']
+    .map(clause => upperCase.indexOf(clause))
+    .filter(pos => pos !== -1);
 
-  // Remove LIMIT and everything after it
-  const limitIndex = result.toUpperCase().indexOf('LIMIT');
-  if (limitIndex !== -1) {
-    result = result.substring(0, limitIndex).trim();
-  }
+  const truncateAt = clausePositions.length > 0
+    ? Math.min(...clausePositions)
+    : noSemicolons.length;
 
-  // Remove GROUP BY (should not be in WHERE clause)
-  const groupByIndex = result.toUpperCase().indexOf('GROUP BY');
-  if (groupByIndex !== -1) {
-    result = result.substring(0, groupByIndex).trim();
-  }
-
-  // Remove trailing AND/OR
-  result = result.replace(/\s+(AND|OR)\s*$/i, '').trim();
-
-  return result;
+  // Truncate at earliest invalid clause and remove trailing AND/OR
+  return noSemicolons
+    .substring(0, truncateAt)
+    .replace(/\s+(AND|OR)\s*$/i, '')
+    .trim();
 }
 
 /**
@@ -91,23 +82,15 @@ function sanitizeSqlOrderBy(sqlOrderBy: string | undefined): string {
     return 'created_at DESC';
   }
 
-  let result = sqlOrderBy;
+  // Remove semicolons and LIMIT clause
+  const noSemicolons = sqlOrderBy.replace(/;/g, '');
+  const limitIndex = noSemicolons.toUpperCase().indexOf('LIMIT');
+  const sanitized = limitIndex !== -1
+    ? noSemicolons.substring(0, limitIndex).trim()
+    : noSemicolons.trim();
 
-  // Remove semicolons
-  result = result.replace(/;/g, '');
-
-  // Remove LIMIT and everything after it
-  const limitIndex = result.toUpperCase().indexOf('LIMIT');
-  if (limitIndex !== -1) {
-    result = result.substring(0, limitIndex).trim();
-  }
-
-  // If empty after sanitization, use default
-  if (result.trim() === '') {
-    return 'created_at DESC';
-  }
-
-  return result;
+  // Return default if empty after sanitization
+  return sanitized !== '' ? sanitized : 'created_at DESC';
 }
 
 // ============================================
@@ -221,28 +204,42 @@ async function executeBreakdownQuery(
 
     const result = await db.prepare(breakdownSql).bind(projectId).all();
 
-    const byCategory: Record<string, number> = {};
-    let totalAmount = 0;
-    let transactionCount = 0;
+    interface BreakdownAccumulator {
+      readonly byCategory: Record<string, number>;
+      readonly totalAmount: number;
+      readonly transactionCount: number;
+    }
 
-    (result.results ?? []).forEach(row => {
-      const category = row.category as string;
-      const amount = row.total_amount as number;
-      const count = row.count as number;
-      byCategory[category] = amount;
-      totalAmount += amount;
-      transactionCount += count;
-    });
+    const rows = result.results ?? [];
+    const initialAccumulator: BreakdownAccumulator = {
+      byCategory: {},
+      totalAmount: 0,
+      transactionCount: 0,
+    };
+
+    const aggregated = rows.reduce<BreakdownAccumulator>(
+      (accumulator, row) => {
+        const category = row.category as string;
+        const amount = row.total_amount as number;
+        const count = row.count as number;
+        return {
+          byCategory: { ...accumulator.byCategory, [category]: amount },
+          totalAmount: accumulator.totalAmount + amount,
+          transactionCount: accumulator.transactionCount + count,
+        };
+      },
+      initialAccumulator
+    );
 
     return {
       success: true,
       data: {
         transactions: [],
-        total: transactionCount,
+        total: aggregated.transactionCount,
         summary: {
-          totalAmount,
-          transactionCount,
-          byCategory,
+          totalAmount: aggregated.totalAmount,
+          transactionCount: aggregated.transactionCount,
+          byCategory: aggregated.byCategory,
         },
       },
     };

@@ -5,7 +5,7 @@
 import type { Environment, CallbackQuery } from '../../types.js';
 import { answerCallbackQuery, sendMessage } from '../../telegram/api.js';
 import { handleTransactionCallbacks } from './transaction.js';
-import { handleMenuCallbacks, handleProjectCallbacks, handleSettingsCallbacks, handleSwitchCallback } from './menu.js';
+import { handleMenuCallbacks, handleProjectCallbacks, handleSettingsCallbacks, handleSwitchCallback, handleNewProjectCallbacks } from './menu.js';
 import { handleCardCallbacks, handleCardAddCallback } from './cards.js';
 import { handleEditCallbacks, handleCategoryCallback } from './edit.js';
 import { handleHistoryCallbacks } from './history.js';
@@ -28,6 +28,7 @@ const callbackHandlers = new Map<string, CallbackHandler>([
   ['edit', handleTransactionCallbacks],
   ['menu', handleMenuCallbacks],
   ['proj', handleProjectCallbacks],
+  ['newproj', handleNewProjectCallbacks],
   ['switch', handleSwitchCallback],
   ['txe', handleEditCallbacks],
   ['txc', handleCategoryCallback],

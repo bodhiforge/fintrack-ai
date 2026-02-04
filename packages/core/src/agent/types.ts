@@ -134,6 +134,23 @@ export type AgentResult =
   | ErrorResult;
 
 // ============================================
+// Agent Decision Types (Function Calling)
+// ============================================
+
+export interface ToolCallDecision {
+  readonly type: 'tool_call';
+  readonly toolName: string;
+  readonly toolArguments: Record<string, unknown>;
+}
+
+export interface TextDecision {
+  readonly type: 'text';
+  readonly message: string;
+}
+
+export type AgentDecision = ToolCallDecision | TextDecision;
+
+// ============================================
 // Session Types
 // ============================================
 
@@ -159,11 +176,18 @@ export interface AwaitingIntentClarificationState {
   readonly suggestedIntent: Intent;
 }
 
+export interface AwaitingCategoryState {
+  readonly type: 'awaiting_category';
+  readonly transactionId: string;
+  readonly merchant: string;
+}
+
 export type SessionState =
   | IdleState
   | AwaitingEditValueState
   | AwaitingConfirmationState
-  | AwaitingIntentClarificationState;
+  | AwaitingIntentClarificationState
+  | AwaitingCategoryState;
 
 export interface Session {
   readonly userId: number;
@@ -171,4 +195,35 @@ export interface Session {
   readonly state: SessionState;
   readonly createdAt: string;
   readonly expiresAt: string;
+}
+
+// ============================================
+// Working Memory Types
+// ============================================
+
+export interface LastTransaction {
+  readonly id: string;
+  readonly merchant: string;
+  readonly amount: number;
+  readonly currency: string;
+  readonly category: string;
+  readonly createdAt: string;
+}
+
+export interface ConversationMessage {
+  readonly role: 'user' | 'assistant';
+  readonly content: string;
+  readonly timestamp: string;
+}
+
+export interface PendingClarification {
+  readonly transactionId: string;
+  readonly field: 'amount' | 'merchant' | 'category';
+  readonly originalValue: string | number;
+}
+
+export interface WorkingMemory {
+  readonly lastTransaction: LastTransaction | null;
+  readonly pendingClarification: PendingClarification | null;
+  readonly recentMessages: readonly ConversationMessage[];
 }
