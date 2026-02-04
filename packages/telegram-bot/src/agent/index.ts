@@ -1,7 +1,7 @@
 /**
  * Agent Orchestrator
  * Main entry point for the FinTrack AI Agent system
- * Uses Memory-First Architecture for context-aware conversations
+ * Uses Memory-First Architecture with OpenAI function calling
  */
 
 import {
@@ -11,10 +11,11 @@ import {
 } from '@fintrack-ai/core';
 import type { Environment, TelegramUser } from '../types.js';
 import type { User, Project } from '@fintrack-ai/core';
-import { getSession, updateSession, clearSession, isIdleSession } from './session.js';
+import { getSession, clearSession, isIdleSession } from './session.js';
 import { getWorkingMemory, addMessage, extendMemoryTTL } from './memory-session.js';
-import { executeAction, type ExecutorContext } from './action-executor.js';
 import { getProjectMembers } from '../db/index.js';
+import { getToolRegistry } from '../tools/index.js';
+import { convertToolResult } from './result-converter.js';
 
 // ============================================
 // Agent Context
@@ -58,16 +59,35 @@ export async function processWithAgent(
   // Extend memory TTL on interaction
   await extendMemoryTTL(environment.DB, user.id, chatId);
 
-  // Use Memory Agent to decide action
-  const memoryAgent = new MemoryAgent(environment.OPENAI_API_KEY);
-  const action = await memoryAgent.decide(text, workingMemory);
+  // Get tool registry and definitions
+  const registry = getToolRegistry();
+  const toolDefinitions = registry.getForLLM();
 
-  console.log(`[Agent] Action: ${action.action}, reasoning: "${action.reasoning}"`);
+  // Use Memory Agent to decide action via function calling
+  const memoryAgent = new MemoryAgent(environment.OPENAI_API_KEY);
+  const decision = await memoryAgent.decide(text, workingMemory, toolDefinitions);
+
+  console.log(`[Agent] Decision: ${decision.type}${decision.type === 'tool_call' ? ` → ${decision.toolName}` : ''}`);
 
   // Add user message to memory
   await addMessage(environment.DB, user.id, chatId, 'user', text);
 
-  // Get project members for executor context
+  // Handle text response (greetings, clarify, unknown)
+  if (decision.type === 'text') {
+    await addMessage(environment.DB, user.id, chatId, 'assistant', decision.message);
+    return { type: 'message', message: decision.message };
+  }
+
+  // Handle tool call
+  const tool = registry.get(decision.toolName);
+
+  if (tool == null) {
+    const errorMessage = `Unknown tool: ${decision.toolName}`;
+    console.error(`[Agent] ${errorMessage}`);
+    return { type: 'error', message: errorMessage };
+  }
+
+  // Get project members for tool context
   const participants = await getProjectMembers(environment, project.id);
 
   // Get payer name
@@ -76,21 +96,32 @@ export async function processWithAgent(
   ).bind(project.id, user.id).first();
   const payerName = (membership?.display_name as string) ?? user.firstName ?? 'User';
 
-  // Build executor context
-  const executorContext: ExecutorContext = {
-    chatId,
-    user,
-    project,
-    environment,
-    payerName,
+  // Build tool context
+  const toolContext = {
+    userId: user.id,
+    projectId: project.id,
+    projectName: project.name,
     participants,
+    defaultCurrency: project.defaultCurrency,
+    defaultLocation: project.defaultLocation,
+    workingMemory,
+    db: environment.DB,
+    environment,
+    chatId,
+    payerName,
   };
 
-  // Execute the action
-  const result = await executeAction(action, executorContext);
+  // Parse and execute tool
+  const args = tool.parameters.parse(decision.toolArguments);
+  const toolResult = await tool.execute(args, toolContext);
+
+  // Convert tool result to AgentResult
+  const result = convertToolResult(decision.toolName, toolResult);
 
   // Add assistant response to memory (for non-delegate results)
   if (result.type === 'message' || result.type === 'error') {
+    await addMessage(environment.DB, user.id, chatId, 'assistant', result.message);
+  } else if (result.type === 'confirm') {
     await addMessage(environment.DB, user.id, chatId, 'assistant', result.message);
   }
 
@@ -124,8 +155,8 @@ async function handleSessionFlow(
         message: `Change ${getFieldName(field)} to ${text}?`,
         keyboard: [
           [
-            { text: '✅ Confirm', callback_data: `${callbackPrefix}_${state.transactionId}_${text}` },
-            { text: '❌ Cancel', callback_data: 'menu_main' },
+            { text: '\u2705 Confirm', callback_data: `${callbackPrefix}_${state.transactionId}_${text}` },
+            { text: '\u274c Cancel', callback_data: 'menu_main' },
           ],
         ],
       };
@@ -141,8 +172,8 @@ async function handleSessionFlow(
           message: 'Confirm action?',
           keyboard: [
             [
-              { text: '✅ Confirm', callback_data: `${state.action}_${state.targetId}` },
-              { text: '❌ Cancel', callback_data: 'menu_main' },
+              { text: '\u2705 Confirm', callback_data: `${state.action}_${state.targetId}` },
+              { text: '\u274c Cancel', callback_data: 'menu_main' },
             ],
           ],
         };
@@ -172,7 +203,7 @@ async function handleSessionFlow(
 
       return {
         type: 'message',
-        message: `✅ Category updated to *${newCategory}* for ${state.merchant}`,
+        message: `\u2705 Category updated to *${newCategory}* for ${state.merchant}`,
         parseMode: 'Markdown',
       };
     }

@@ -11,7 +11,9 @@ import { zodToJsonSchema } from 'zod-to-json-schema';
 import type { Tool, ToolDefinition } from '@fintrack-ai/core';
 import { recordTool } from './record-tool.js';
 import { queryTool } from './query-tool.js';
-import { modifyTool } from './modify-tool.js';
+import { modifyAmountTool } from './modify-amount-tool.js';
+import { modifyMerchantTool } from './modify-merchant-tool.js';
+import { modifyCategoryTool } from './modify-category-tool.js';
 import { deleteTool } from './delete-tool.js';
 
 // ============================================
@@ -25,7 +27,9 @@ export class ToolRegistry {
     // Register built-in tools
     this.register(recordTool);
     this.register(queryTool);
-    this.register(modifyTool);
+    this.register(modifyAmountTool);
+    this.register(modifyMerchantTool);
+    this.register(modifyCategoryTool);
     this.register(deleteTool);
   }
 

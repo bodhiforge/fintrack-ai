@@ -134,6 +134,23 @@ export type AgentResult =
   | ErrorResult;
 
 // ============================================
+// Agent Decision Types (Function Calling)
+// ============================================
+
+export interface ToolCallDecision {
+  readonly type: 'tool_call';
+  readonly toolName: string;
+  readonly toolArguments: Record<string, unknown>;
+}
+
+export interface TextDecision {
+  readonly type: 'text';
+  readonly message: string;
+}
+
+export type AgentDecision = ToolCallDecision | TextDecision;
+
+// ============================================
 // Session Types
 // ============================================
 

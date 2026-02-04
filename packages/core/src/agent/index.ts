@@ -6,9 +6,6 @@
 // Types
 export * from './types.js';
 
-// Action Schema
-export * from './action-schema.js';
-
 // Memory Agent
 export { MemoryAgent, type MemoryAgentOptions } from './memory-agent.js';
 

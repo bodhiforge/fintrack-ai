@@ -1,13 +1,12 @@
 /**
  * Memory Agent
- * Single LLM call with working memory context for better understanding of corrections
+ * Single LLM call with working memory context
+ * Uses OpenAI function calling (tools) instead of structured output
  */
 
-import { z } from 'zod';
-import { zodResponseFormat } from 'openai/helpers/zod';
 import OpenAI from 'openai';
-import type { WorkingMemory, LastTransaction } from './types.js';
-import { ActionSchema, type Action } from './action-schema.js';
+import type { WorkingMemory, AgentDecision, ToolCallDecision, TextDecision } from './types.js';
+import type { ToolDefinition } from './tools/types.js';
 
 // ============================================
 // System Prompt Template
@@ -15,66 +14,11 @@ import { ActionSchema, type Action } from './action-schema.js';
 
 const MEMORY_AGENT_SYSTEM_PROMPT = `You are an expense tracking assistant that understands context and corrections.
 
-## Your Capabilities
-1. Record new expenses
-2. Query spending data
-3. Modify existing transactions
-4. Delete transactions
-5. Ask for clarification when needed
-6. Respond to general chat
-
 ## Working Memory
 {workingMemory}
 
-## CRITICAL: Understanding Corrections
-
-When user says something that references a previous transaction, they're likely correcting it:
-- "No, I mean X" → Modify merchant to X
-- "Actually it was Y" → Modify amount/merchant to Y
-- "H Mart" after "hmark" → Modify merchant to "H Mart"
-- "Wrong, it was 6" → Modify amount to 6
-- "That was at Costco" → Modify merchant to Costco
-- "25 not 20" → Modify amount to 25
-
-If there's a lastTransaction and user input looks like a correction:
-1. Use action: "modify" with target: "last"
-2. Determine which field to modify (amount, merchant, category)
-3. Extract the new value
-
 ## Date Handling
 Today is {today} (year {year}). ALWAYS use year {year} for dates.
-
-## Action Guidelines
-
-### record
-Use when user wants to log a NEW expense:
-- Must have: merchant + amount
-- Examples: "coffee 5", "lunch 30", "uber to airport 45"
-
-### query
-Use when user wants to VIEW/ANALYZE expenses:
-- Types: total, breakdown, history, balance, settlement
-- Generate SQL WHERE clause with status filter: status IN ('confirmed', 'personal')
-
-### modify
-Use when user wants to CHANGE an existing transaction:
-- If lastTransaction exists and input references it, use target: "last"
-- Fields: amount, merchant, category, split
-
-### delete
-Use when user explicitly wants to REMOVE a transaction:
-- Keywords: "delete", "remove", "取消", "删除"
-
-### clarify
-Use when you need more information to proceed:
-- Ambiguous input
-- Multiple possible interpretations
-
-### respond
-Use for greetings, help requests, or general chat:
-- "Hi", "Hello", "你好"
-- "How to use this?"
-- Off-topic messages
 
 ## Category Names (lowercase)
 dining, grocery, gas, shopping, subscription, travel, transport, entertainment, health, utilities, sports, education, other
@@ -87,29 +31,14 @@ dining, grocery, gas, shopping, subscription, travel, transport, entertainment, 
 - Uber, Lyft → transport
 - Netflix, Spotify → subscription
 
-## Examples
-
-### New Expense
-User: "coffee 5"
-→ action: record, transaction: {merchant: "Coffee", amount: 5, category: "dining", ...}
-
-### Query
-User: "how much this month"
-→ action: query, query: {queryType: "total", sqlWhere: "status IN ('confirmed', 'personal') AND ...", ...}
-
-### Correction (with lastTransaction)
-lastTransaction: {merchant: "hmark", amount: 62.64, category: "other"}
-User: "No, I mean H Mart"
-→ action: modify, modify: {target: "last", field: "merchant", newValue: "H Mart"}
-
-### Amount Correction
-lastTransaction: {merchant: "Lunch", amount: 20}
-User: "Actually 25"
-→ action: modify, modify: {target: "last", field: "amount", newValue: 25}
-
-### Greeting
-User: "Hi"
-→ action: respond, respond: {message: "Hello! I can help you track expenses..."}`;
+## Guidelines
+- If user provides a NUMBER after a recent transaction, it's likely an amount correction → use modify_amount
+- If user provides a NAME after a recent transaction, it's likely a merchant correction → use modify_merchant
+- If user provides a CATEGORY word after a recent transaction, it's likely a category correction → use modify_category
+- Corrections ONLY apply when lastTransaction exists in working memory
+- For greetings, help, or unrecognized requests, just respond with text (no tool call)
+- When recording, pass the user's original text as rawText so the parser can handle it
+- For queries, generate a SQL WHERE clause with status filter: status IN ('confirmed', 'personal')`;
 
 // ============================================
 // Memory Agent Class
@@ -130,32 +59,59 @@ export class MemoryAgent {
 
   /**
    * Decide what action to take based on user input and working memory
+   * Returns either a tool call or a text response
    */
-  async decide(text: string, memory: WorkingMemory): Promise<Action> {
+  async decide(
+    text: string,
+    memory: WorkingMemory,
+    toolDefinitions: readonly ToolDefinition[]
+  ): Promise<AgentDecision> {
     const systemPrompt = this.buildSystemPrompt(memory);
 
     try {
-      const completion = await this.client.beta.chat.completions.parse({
+      const completion = await this.client.chat.completions.create({
         model: this.model,
         messages: [
           { role: 'system', content: systemPrompt },
           ...this.buildConversationMessages(memory),
           { role: 'user', content: text },
         ],
-        response_format: zodResponseFormat(ActionSchema, 'action'),
+        tools: toolDefinitions.map(definition => ({
+          type: definition.type,
+          function: {
+            name: definition.function.name,
+            description: definition.function.description,
+            parameters: definition.function.parameters,
+          },
+        })),
+        tool_choice: 'auto',
         temperature: 0,
       });
 
-      const parsed = completion.choices[0]?.message?.parsed;
+      const message = completion.choices[0]?.message;
 
-      if (parsed == null) {
-        return this.fallbackResponse('I didn\'t understand that. Please try again.');
+      if (message?.tool_calls != null && message.tool_calls.length > 0) {
+        const toolCall = message.tool_calls[0];
+        const decision: ToolCallDecision = {
+          type: 'tool_call',
+          toolName: toolCall.function.name,
+          toolArguments: JSON.parse(toolCall.function.arguments) as Record<string, unknown>,
+        };
+        return decision;
       }
 
-      return parsed as Action;
+      const decision: TextDecision = {
+        type: 'text',
+        message: message?.content ?? "I didn't understand that. Please try again.",
+      };
+      return decision;
     } catch (error) {
       console.error('[MemoryAgent] Error:', error instanceof Error ? error.message : error);
-      return this.fallbackResponse('Something went wrong. Please try again.');
+      const fallback: TextDecision = {
+        type: 'text',
+        message: 'Something went wrong. Please try again.',
+      };
+      return fallback;
     }
   }
 
@@ -179,29 +135,22 @@ export class MemoryAgent {
    * Format working memory for prompt
    */
   private formatWorkingMemory(memory: WorkingMemory): string {
-    const sections: string[] = [];
-
-    // Last transaction
-    if (memory.lastTransaction != null) {
-      const tx = memory.lastTransaction;
-      sections.push(`### Last Transaction (can be modified/deleted)
-- ID: ${tx.id}
-- Merchant: ${tx.merchant}
-- Amount: ${tx.amount} ${tx.currency}
-- Category: ${tx.category}
-- Created: ${tx.createdAt}`);
-    } else {
-      sections.push('### Last Transaction\nNone (no recent transaction to reference)');
-    }
-
-    // Pending clarification
-    if (memory.pendingClarification != null) {
-      const pc = memory.pendingClarification;
-      sections.push(`### Pending Clarification
-- Transaction: ${pc.transactionId}
-- Field: ${pc.field}
-- Original: ${pc.originalValue}`);
-    }
+    const sections: readonly string[] = [
+      memory.lastTransaction != null
+        ? `### Last Transaction (can be modified/deleted)
+- ID: ${memory.lastTransaction.id}
+- Merchant: ${memory.lastTransaction.merchant}
+- Amount: ${memory.lastTransaction.amount} ${memory.lastTransaction.currency}
+- Category: ${memory.lastTransaction.category}
+- Created: ${memory.lastTransaction.createdAt}`
+        : '### Last Transaction\nNone (no recent transaction to reference)',
+      ...(memory.pendingClarification != null
+        ? [`### Pending Clarification
+- Transaction: ${memory.pendingClarification.transactionId}
+- Field: ${memory.pendingClarification.field}
+- Original: ${memory.pendingClarification.originalValue}`]
+        : []),
+    ];
 
     return sections.join('\n\n');
   }
@@ -209,26 +158,10 @@ export class MemoryAgent {
   /**
    * Build conversation messages from recent history
    */
-  private buildConversationMessages(memory: WorkingMemory): Array<{ role: 'user' | 'assistant'; content: string }> {
+  private buildConversationMessages(memory: WorkingMemory): ReadonlyArray<{ readonly role: 'user' | 'assistant'; readonly content: string }> {
     return memory.recentMessages.map(message => ({
       role: message.role,
       content: message.content,
     }));
-  }
-
-  /**
-   * Fallback response for errors
-   */
-  private fallbackResponse(message: string): Action {
-    return {
-      action: 'respond',
-      reasoning: 'Fallback due to error',
-      transaction: null,
-      query: null,
-      modify: null,
-      delete: null,
-      clarify: null,
-      respond: { message },
-    };
   }
 }
