@@ -34,7 +34,7 @@ AI: "Got it. $50 split between you and Bob. Alice excluded.
 
 | Feature | Status | Description |
 |---------|--------|-------------|
-| **AI Agent** | ✅ | Intent classification + natural language queries |
+| **AI Agent** | ✅ | OpenAI function calling + natural language queries |
 | **Semantic Few-shot** | ✅ | Embedding-based retrieval for personalized parsing |
 | **Voice Input** | ✅ | Whisper transcription → Agent routing |
 | **AI Parsing** | ✅ | Natural language → structured transaction via GPT-4o-mini |
@@ -51,7 +51,7 @@ AI: "Got it. $50 split between you and Bob. Alice excluded.
 
 ## AI Agent Architecture
 
-The bot uses a **Memory-First Agent** pattern for context-aware conversations:
+The bot uses **OpenAI function calling** with a **Memory-First** pattern. Each capability is a self-contained tool — the LLM naturally picks the right tool or responds with text when no tool fits.
 
 ```
 User: "hmark 62.64"
@@ -61,24 +61,34 @@ User: "hmark 62.64"
 └─────────────────────────┘
          ↓
 ┌─────────────────────────┐
-│    Memory Agent         │ → action: record
-│    (gpt-4o-mini)        │ → Creates transaction
+│    Memory Agent         │ → tool_call: record_expense
+│    (function calling)   │ → {rawText: "hmark 62.64"}
 └─────────────────────────┘
          ↓
-Bot: "💳 hmark $62.64"
+   Tool Execution → Result Converter → Telegram Keyboard
+         ↓
+Bot: "💳 hmark $62.64  [Confirm] [Edit]"
 
-User: "No, I mean H Mart"
+User: "H Mart"
          ↓
 ┌─────────────────────────┐
 │    Working Memory       │ → lastTransaction: {merchant: "hmark", ...}
 └─────────────────────────┘
          ↓
 ┌─────────────────────────┐
-│    Memory Agent         │ → action: modify
-│    (understands context)│ → Updates merchant to "H Mart"
+│    Memory Agent         │ → tool_call: modify_merchant
+│    (understands context)│ → {target: "last", newMerchant: "H Mart"}
 └─────────────────────────┘
          ↓
-Bot: "Updated merchant: hmark → H Mart"
+Bot: "✅ Updated merchant: hmark → H Mart"
+
+User: "hello"
+         ↓
+┌─────────────────────────┐
+│    Memory Agent         │ → text response (no tool call)
+└─────────────────────────┘
+         ↓
+Bot: "Hello! I can help you track expenses..."
 ```
 
 ### Working Memory
@@ -88,16 +98,17 @@ The agent maintains context for natural corrections:
 - **recentMessages**: Last 5 conversation messages
 - Recognizes: "No, I mean X", "Actually 25", "That was at Costco"
 
-### Action Types
+### Tools (Function Calling)
 
-| Action | Example | Description |
-|--------|---------|-------------|
-| `record` | "coffee 5" | Log new expense |
-| `query` | "how much this month" | View/analyze expenses |
-| `modify` | "No, I mean H Mart" | Edit last transaction |
-| `delete` | "delete the last one" | Remove transaction |
-| `clarify` | (ambiguous input) | Ask for more info |
-| `respond` | "hello" | General chat |
+| Tool | Trigger | Description |
+|------|---------|-------------|
+| `record_expense` | "coffee 5" | Log new expense via parser |
+| `query_expenses` | "how much this month" | View/analyze expenses |
+| `modify_amount` | "40.81" (a number) | Correct amount of last transaction |
+| `modify_merchant` | "H Mart" (a name) | Correct merchant of last transaction |
+| `modify_category` | "grocery" (a category) | Correct category of last transaction |
+| `delete_expense` | "delete that" | Remove transaction |
+| _(no tool)_ | "hello", "set default..." | Text response — greetings, unknown requests |
 
 ### Semantic Few-shot Learning
 
@@ -189,8 +200,8 @@ curl https://your-worker.workers.dev/setup-webhook
 │  ┌────────────────────────────────────────────────────┐    │
 │  │              Cloudflare Workers (Edge)              │    │
 │  │  ┌───────────────┐  ┌─────────┐  ┌─────────────┐  │    │
-│  │  │ Agent Router  │  │ Parser  │  │  Splitter   │  │    │
-│  │  │ (Intent+SQL)  │  │  (AI)   │  │   (Algo)    │  │    │
+│  │  │ Memory Agent  │  │ Parser  │  │  Splitter   │  │    │
+│  │  │ (Fn Calling)  │  │  (AI)   │  │   (Algo)    │  │    │
 │  │  └───────────────┘  └─────────┘  └─────────────┘  │    │
 │  │  ┌───────────────┐  ┌─────────┐  ┌─────────────┐  │    │
 │  │  │   Whisper     │  │ Vision  │  │  Embedding  │  │    │
@@ -219,10 +230,10 @@ curl https://your-worker.workers.dev/setup-webhook
 packages/
 ├── core/                     # Shared business logic
 │   ├── agent/                # AI Agent system
-│   │   ├── memory-agent.ts       # Memory-aware action decision
-│   │   ├── action-schema.ts      # Unified action types (Zod)
+│   │   ├── memory-agent.ts       # LLM decision via function calling
+│   │   ├── tools/types.ts        # Tool, ToolDefinition, PiToolResult
 │   │   ├── intent-classifier.ts  # Legacy intent classifier
-│   │   └── types.ts              # Agent + memory types
+│   │   └── types.ts              # Agent + memory + AgentDecision types
 │   ├── parser.ts             # AI transaction parsing
 │   ├── splitter.ts           # Expense splitting & debt simplification
 │   └── types.ts              # TypeScript types
@@ -230,11 +241,20 @@ packages/
 │   └── src/
 │       ├── index.ts          # Entry point (HTTP routing)
 │       ├── agent/            # Agent orchestration
-│       │   ├── index.ts          # Main router (uses MemoryAgent)
-│       │   ├── action-executor.ts# Execute agent actions
+│       │   ├── index.ts          # Orchestrator (decide → execute → convert)
+│       │   ├── result-converter.ts # PiToolResult → AgentResult + keyboards
 │       │   ├── memory-session.ts # Working memory CRUD
 │       │   ├── query-executor.ts # D1 query execution
 │       │   └── response-formatter.ts
+│       ├── tools/            # Pi Agent-style tool system
+│       │   ├── registry.ts       # Tool registry + getForLLM()
+│       │   ├── record-tool.ts    # record_expense
+│       │   ├── query-tool.ts     # query_expenses
+│       │   ├── modify-amount-tool.ts   # modify_amount
+│       │   ├── modify-merchant-tool.ts # modify_merchant
+│       │   ├── modify-category-tool.ts # modify_category
+│       │   ├── modify-helpers.ts # Shared modify DB logic
+│       │   └── delete-tool.ts    # delete_expense
 │       ├── services/         # AI services
 │       │   ├── embedding.ts      # Vectorize for few-shot
 │       │   ├── whisper.ts        # Voice transcription
@@ -255,6 +275,7 @@ packages/
 - [x] **Phase 3: Agent Architecture** - Intent routing, natural language queries
 - [x] **Phase 3.5: Semantic Few-shot** - Embedding-based personalized parsing
 - [x] **Phase 4: Memory-First Agent** - Context-aware corrections, working memory
+- [x] **Phase 4.5: Pi Agent Tool System** - OpenAI function calling, discrete tools, result converter
 - [ ] **Phase 5: Proactive Suggestions** - Anomaly detection, spending insights
 - [ ] **Phase 6: Gmail Integration** - Auto-parse bank emails
 
@@ -262,11 +283,11 @@ packages/
 
 | Commit | Description |
 |--------|-------------|
+| `ebb8c82` | refactor: switch from structured output to OpenAI function calling |
+| `76f7e40` | feat: add Pi Agent-style tool system with bug fixes |
+| `74c50a9` | feat: improve project management and menu UX |
 | `0d15270` | feat: implement memory-first agent architecture |
 | `6560410` | feat: add embedding-based semantic few-shot retrieval |
-| `bda4088` | feat: add low-confidence intent clarification dialog |
-| `706ded9` | perf: merge IntentClassifier and QueryParser into single LLM call |
-| `27db182` | feat: add Agent architecture with intent routing and query tools |
 
 ## License
 
