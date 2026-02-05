@@ -1,23 +1,19 @@
 /**
  * Agent Orchestrator
- * Main entry point for the FinTrack AI Agent system
- * Uses Memory-First Architecture with OpenAI function calling
+ * Agentic loop: tool results feed back to LLM for natural responses
  */
 
-import {
-  MemoryAgent,
-  type AgentResult,
-  type Session,
-} from '@fintrack-ai/core';
+import OpenAI from 'openai';
+import type { Keyboard, ToolContext, ToolDefinition } from '@fintrack-ai/core';
 import type { Environment, TelegramUser } from '../types.js';
 import type { User, Project } from '@fintrack-ai/core';
-import { getSession, clearSession, isIdleSession } from './session.js';
 import { getWorkingMemory, addMessage, extendMemoryTTL } from './memory-session.js';
 import { getProjectMembers } from '../db/index.js';
-import { getToolRegistry } from '../tools/index.js';
+import { getToolRegistry, type ToolRegistry } from '../tools/index.js';
+import { buildSystemPrompt, buildConversationMessages } from './prompt-builder.js';
 
 // ============================================
-// Agent Context
+// Types
 // ============================================
 
 export interface AgentContext {
@@ -28,6 +24,131 @@ export interface AgentContext {
   readonly telegramUser: TelegramUser;
 }
 
+export interface AgentResponse {
+  readonly text: string;
+  readonly keyboard?: Keyboard;
+}
+
+// ============================================
+// Constants
+// ============================================
+
+const MAX_LOOP_ITERATIONS = 3;
+const MODEL = 'gpt-4o-mini';
+
+// ============================================
+// Agentic Loop (recursive)
+// ============================================
+
+interface LoopState {
+  readonly messages: OpenAI.ChatCompletionMessageParam[];
+  readonly keyboard?: Keyboard;
+  readonly iteration: number;
+}
+
+async function runAgentLoop(
+  client: OpenAI,
+  toolDefinitions: readonly ToolDefinition[],
+  registry: ToolRegistry,
+  toolContext: ToolContext,
+  state: LoopState
+): Promise<AgentResponse> {
+  if (state.iteration >= MAX_LOOP_ITERATIONS) {
+    return { text: 'Processing complete.', keyboard: state.keyboard };
+  }
+
+  const completion = await client.chat.completions.create({
+    model: MODEL,
+    messages: state.messages,
+    tools: toolDefinitions.map(definition => ({
+      type: definition.type,
+      function: {
+        name: definition.function.name,
+        description: definition.function.description,
+        parameters: definition.function.parameters,
+      },
+    })),
+    tool_choice: 'auto',
+    temperature: 0,
+  });
+
+  const message = completion.choices[0]?.message;
+
+  if (message == null) {
+    return { text: 'Processing complete.', keyboard: state.keyboard };
+  }
+
+  // If no tool calls: LLM produced final text response
+  if (message.tool_calls == null || message.tool_calls.length === 0) {
+    const responseText = message.content ?? "I didn't understand that. Please try again.";
+    return { text: responseText, keyboard: state.keyboard };
+  }
+
+  // Tool calls: execute all, feed results back
+  const toolResults = await Promise.all(
+    message.tool_calls.map(async toolCall => {
+      const tool = registry.get(toolCall.function.name);
+
+      if (tool == null) {
+        console.error(`[Agent] Unknown tool: ${toolCall.function.name}`);
+        return {
+          toolCallId: toolCall.id,
+          content: `Error: Unknown tool "${toolCall.function.name}"`,
+          keyboard: undefined as Keyboard | undefined,
+        };
+      }
+
+      try {
+        const args = tool.parameters.parse(
+          JSON.parse(toolCall.function.arguments) as unknown
+        );
+        const result = await tool.execute(args, toolContext);
+
+        console.log(`[Agent] Tool ${toolCall.function.name} executed`);
+
+        return {
+          toolCallId: toolCall.id,
+          content: result.content,
+          keyboard: result.keyboard,
+        };
+      } catch (error) {
+        console.error(`[Agent] Tool ${toolCall.function.name} error:`, error);
+        return {
+          toolCallId: toolCall.id,
+          content: `Error executing ${toolCall.function.name}: ${error instanceof Error ? error.message : 'Unknown error'}`,
+          keyboard: undefined as Keyboard | undefined,
+        };
+      }
+    })
+  );
+
+  // Collect last keyboard from tool results
+  const lastKeyboard = toolResults.reduce<Keyboard | undefined>(
+    (accumulator, result) => result.keyboard ?? accumulator,
+    state.keyboard
+  );
+
+  // Build updated messages with assistant + tool results
+  const toolResultMessages: OpenAI.ChatCompletionMessageParam[] = toolResults.map(result => ({
+    role: 'tool' as const,
+    tool_call_id: result.toolCallId,
+    content: result.content,
+  }));
+
+  const updatedMessages: OpenAI.ChatCompletionMessageParam[] = [
+    ...state.messages,
+    message,
+    ...toolResultMessages,
+  ];
+
+  // Recurse with updated state
+  return runAgentLoop(client, toolDefinitions, registry, toolContext, {
+    messages: updatedMessages,
+    keyboard: lastKeyboard,
+    iteration: state.iteration + 1,
+  });
+}
+
 // ============================================
 // Main Agent Entry Point
 // ============================================
@@ -35,18 +156,10 @@ export interface AgentContext {
 export async function processWithAgent(
   text: string,
   context: AgentContext
-): Promise<AgentResult> {
+): Promise<AgentResponse> {
   const { user, project, environment, chatId } = context;
 
-  // Check for active session state (legacy multi-turn conversation)
-  const session = await getSession(environment.DB, user.id, chatId);
-
-  // Handle session-based flows first (legacy)
-  if (!isIdleSession(session)) {
-    return handleSessionFlow(text, session!, context);
-  }
-
-  // Get working memory for context
+  // Load working memory, extend TTL
   const workingMemory = await getWorkingMemory(environment.DB, user.id, chatId);
 
   console.log('[Agent] Working memory:', JSON.stringify({
@@ -55,184 +168,62 @@ export async function processWithAgent(
     recentMessagesCount: workingMemory.recentMessages.length,
   }));
 
-  // Extend memory TTL on interaction
   await extendMemoryTTL(environment.DB, user.id, chatId);
 
-  // Get tool registry and definitions
-  const registry = getToolRegistry();
-  const toolDefinitions = registry.getForLLM();
-
-  // Use Memory Agent to decide action via function calling
-  const memoryAgent = new MemoryAgent(environment.OPENAI_API_KEY);
-  const decision = await memoryAgent.decide(text, workingMemory, toolDefinitions);
-
-  console.log(`[Agent] Decision: ${decision.type}${decision.type === 'tool_call' ? ` → ${decision.toolName}` : ''}`);
-
-  // Add user message to memory
-  await addMessage(environment.DB, user.id, chatId, 'user', text);
-
-  // Handle text response (greetings, clarify, unknown)
-  if (decision.type === 'text') {
-    await addMessage(environment.DB, user.id, chatId, 'assistant', decision.message);
-    return { type: 'message', message: decision.message };
-  }
-
-  // Handle tool call
-  const tool = registry.get(decision.toolName);
-
-  if (tool == null) {
-    const errorMessage = `Unknown tool: ${decision.toolName}`;
-    console.error(`[Agent] ${errorMessage}`);
-    return { type: 'error', message: errorMessage };
-  }
-
-  // Get project members for tool context
+  // Build tool context
   const participants = await getProjectMembers(environment, project.id);
 
-  // Get payer name
   const membership = await environment.DB.prepare(
     'SELECT display_name FROM project_members WHERE project_id = ? AND user_id = ?'
   ).bind(project.id, user.id).first();
   const payerName = (membership?.display_name as string) ?? user.firstName ?? 'User';
 
-  // Build tool context
-  const toolContext = {
+  const toolContext: ToolContext = {
     userId: user.id,
+    chatId,
     projectId: project.id,
     projectName: project.name,
     participants,
     defaultCurrency: project.defaultCurrency,
     defaultLocation: project.defaultLocation,
+    payerName,
     workingMemory,
     db: environment.DB,
-    environment,
-    chatId,
-    payerName,
+    openaiApiKey: environment.OPENAI_API_KEY,
+    // Pass environment for record-tool's semantic search
+    ...(({ environment }) => ({ environment }))(context),
   };
 
-  // Parse, execute, convert — each tool knows how to present itself
-  const args = tool.parameters.parse(decision.toolArguments);
-  const toolResult = await tool.execute(args, toolContext);
-  const result = tool.toAgentResult(toolResult);
+  // Build messages: system + conversation history + user message
+  const registry = getToolRegistry();
+  const toolDefinitions = registry.getForLLM();
 
-  // Add assistant response to memory (for non-delegate results)
-  if (result.type === 'message' || result.type === 'error') {
-    await addMessage(environment.DB, user.id, chatId, 'assistant', result.message);
-  } else if (result.type === 'confirm') {
-    await addMessage(environment.DB, user.id, chatId, 'assistant', result.message);
+  const messages: OpenAI.ChatCompletionMessageParam[] = [
+    { role: 'system', content: buildSystemPrompt(workingMemory, project.name) },
+    ...buildConversationMessages(workingMemory),
+    { role: 'user', content: text },
+  ];
+
+  // Add user message to working memory
+  await addMessage(environment.DB, user.id, chatId, 'user', text);
+
+  const client = new OpenAI({ apiKey: environment.OPENAI_API_KEY });
+
+  try {
+    const response = await runAgentLoop(
+      client,
+      toolDefinitions,
+      registry,
+      toolContext,
+      { messages, iteration: 0 }
+    );
+
+    // Save assistant response to memory
+    await addMessage(environment.DB, user.id, chatId, 'assistant', response.text);
+
+    return response;
+  } catch (error) {
+    console.error('[Agent] Error:', error instanceof Error ? error.message : error);
+    return { text: 'Something went wrong. Please try again.' };
   }
-
-  return result;
-}
-
-// ============================================
-// Session Flow Handler (Legacy)
-// ============================================
-
-async function handleSessionFlow(
-  text: string,
-  session: Session,
-  context: AgentContext
-): Promise<AgentResult> {
-  const { user, environment, chatId } = context;
-  const { state } = session;
-
-  switch (state.type) {
-    case 'awaiting_edit_value': {
-      // Clear session first
-      await clearSession(environment.DB, user.id, chatId);
-
-      // Trigger edit with the provided value
-      const field = state.field;
-      const callbackPrefix = getEditCallbackPrefix(field);
-
-      // Return a confirmation
-      return {
-        type: 'confirm',
-        message: `Change ${getFieldName(field)} to ${text}?`,
-        keyboard: [
-          [
-            { text: '\u2705 Confirm', callback_data: `${callbackPrefix}_${state.transactionId}_${text}` },
-            { text: '\u274c Cancel', callback_data: 'menu_main' },
-          ],
-        ],
-      };
-    }
-
-    case 'awaiting_confirmation': {
-      await clearSession(environment.DB, user.id, chatId);
-
-      const lowerText = text.toLowerCase();
-      if (lowerText === 'yes' || lowerText === 'y' || lowerText === 'ok') {
-        return {
-          type: 'confirm',
-          message: 'Confirm action?',
-          keyboard: [
-            [
-              { text: '\u2705 Confirm', callback_data: `${state.action}_${state.targetId}` },
-              { text: '\u274c Cancel', callback_data: 'menu_main' },
-            ],
-          ],
-        };
-      } else {
-        return {
-          type: 'message',
-          message: 'Cancelled',
-        };
-      }
-    }
-
-    case 'awaiting_intent_clarification': {
-      // Clear session and re-process with memory agent
-      await clearSession(environment.DB, user.id, chatId);
-      return processWithAgent(text, context);
-    }
-
-    case 'awaiting_category': {
-      // User is replying with custom category
-      const newCategory = text.trim().toLowerCase();
-      await clearSession(environment.DB, user.id, chatId);
-
-      // Update the transaction
-      await environment.DB.prepare(
-        'UPDATE transactions SET category = ? WHERE id = ?'
-      ).bind(newCategory, state.transactionId).run();
-
-      return {
-        type: 'message',
-        message: `\u2705 Category updated to *${newCategory}* for ${state.merchant}`,
-        parseMode: 'Markdown',
-      };
-    }
-
-    default:
-      // Clear invalid session
-      await clearSession(environment.DB, user.id, chatId);
-      // Re-process as new message
-      return processWithAgent(text, context);
-  }
-}
-
-// ============================================
-// Helper Functions
-// ============================================
-
-function getEditCallbackPrefix(field: string): string {
-  const prefixes: Record<string, string> = {
-    amount: 'txe_amt',
-    merchant: 'txe_mrc',
-    category: 'txe_cat',
-    split: 'txe_spl',
-  };
-  return prefixes[field] ?? 'txe_amt';
-}
-
-function getFieldName(field: string): string {
-  const names: Record<string, string> = {
-    amount: 'amount',
-    merchant: 'merchant',
-    category: 'category',
-    split: 'split',
-  };
-  return names[field] ?? field;
 }

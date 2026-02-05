@@ -1,15 +1,12 @@
 /**
  * Query Tool
  * Queries and analyzes expense data
- *
- * Pi Agent-inspired implementation with:
- * - Zod schema for type-safe parameters
- * - Dual return: content (for LLM) + details (for UI)
  */
 
 import { z } from 'zod';
-import type { Tool, PiToolResult, PiToolContextWithDb, AgentResult, QueryType, ParsedQuery, QuerySummary, Transaction } from '@fintrack-ai/core';
+import type { Tool, ToolExecutionResult, ToolContext } from '@fintrack-ai/core';
 import { executeQuery } from '../agent/query-executor.js';
+import type { ParsedQuery } from '../agent/query-executor.js';
 import { formatQueryResponse } from '../agent/response-formatter.js';
 
 // ============================================
@@ -42,60 +39,28 @@ const QueryParamsSchema = z.object({
 type QueryParams = z.infer<typeof QueryParamsSchema>;
 
 // ============================================
-// Result Details Schema
-// ============================================
-
-interface QueryDetails {
-  readonly queryType: QueryType;
-  readonly transactions: readonly Transaction[];
-  readonly total: number;
-  readonly summary: QuerySummary;
-  readonly formattedMessage: string;
-}
-
-// ============================================
 // Tool Implementation
 // ============================================
 
-export const queryTool: Tool<QueryParams, QueryDetails, D1Database> = {
+export const queryTool: Tool<QueryParams> = {
   name: 'query_expenses',
   description: 'Query and analyze expenses. Use for viewing spending history, totals, breakdowns by category, or checking balances.',
   parameters: QueryParamsSchema,
 
   async execute(
     args: QueryParams,
-    context: PiToolContextWithDb<D1Database>
-  ): Promise<PiToolResult<QueryDetails>> {
-    const { db, projectId, defaultCurrency } = context;
+    context: ToolContext
+  ): Promise<ToolExecutionResult> {
+    const db = context.db as D1Database;
 
     try {
       // Handle special query types that delegate to commands
       if (args.queryType === 'balance') {
-        return {
-          success: true,
-          content: 'Use /balance command to see who owes whom',
-          details: {
-            queryType: 'balance',
-            transactions: [],
-            total: 0,
-            summary: { totalAmount: 0, transactionCount: 0 },
-            formattedMessage: 'Use /balance to see settlement details',
-          },
-        };
+        return { content: 'Use /balance command to see who owes whom' };
       }
 
       if (args.queryType === 'settlement') {
-        return {
-          success: true,
-          content: 'Use /settle command to see settlement options',
-          details: {
-            queryType: 'settlement',
-            transactions: [],
-            total: 0,
-            summary: { totalAmount: 0, transactionCount: 0 },
-            formattedMessage: 'Use /settle to see settlement options',
-          },
-        };
+        return { content: 'Use /settle command to see settlement options' };
       }
 
       // Fix year in dates (LLMs sometimes copy wrong year from examples)
@@ -103,7 +68,6 @@ export const queryTool: Tool<QueryParams, QueryDetails, D1Database> = {
       const fixYear = (str: string): string =>
         str.replace(/\b(202\d)\b/g, match => {
           const year = parseInt(match, 10);
-          // Only fix if year is in the past or too far in future (likely a copy error)
           return year < currentYear || year > currentYear + 1
             ? currentYear.toString()
             : match;
@@ -127,26 +91,22 @@ export const queryTool: Tool<QueryParams, QueryDetails, D1Database> = {
       // Execute query
       const result = await executeQuery(parsedQuery, {
         db,
-        projectId,
-        defaultCurrency,
+        projectId: context.projectId,
+        defaultCurrency: context.defaultCurrency,
       });
 
       if (!result.success || result.data == null) {
-        return {
-          success: false,
-          content: `Query failed: ${result.error ?? 'Unknown error'}`,
-          error: result.error,
-        };
+        return { content: `Query failed: ${result.error ?? 'Unknown error'}` };
       }
 
-      const { transactions, total, summary } = result.data;
+      const { transactions, summary } = result.data;
 
       // Format response for display
       const formatted = formatQueryResponse(
         parsedQuery,
         transactions,
         summary,
-        defaultCurrency
+        context.defaultCurrency
       );
 
       // Build content for LLM
@@ -167,44 +127,16 @@ export const queryTool: Tool<QueryParams, QueryDetails, D1Database> = {
         const recentTx = transactions.slice(0, 5)
           .map(tx => `${tx.merchant}: $${tx.amount.toFixed(2)}`)
           .join(', ');
-        return `Found ${total} transactions. Recent: ${recentTx}${total > 5 ? '...' : ''}`;
+        return `Found ${result.data.total} transactions. Recent: ${recentTx}${result.data.total > 5 ? '...' : ''}`;
       })();
 
-      return {
-        success: true,
-        content,
-        details: {
-          queryType: args.queryType,
-          transactions,
-          total,
-          summary,
-          formattedMessage: formatted.message,
-        },
-      };
+      // Return content + formatted message for display
+      return { content: `${content}\n\nFormatted:\n${formatted.message}` };
     } catch (error) {
       console.error('[QueryTool] Error:', error);
       return {
-        success: false,
-        content: 'Failed to query expenses',
-        error: error instanceof Error ? error.message : 'Unknown error',
+        content: `Failed to query expenses: ${error instanceof Error ? error.message : 'Unknown error'}`,
       };
     }
-  },
-
-  toAgentResult(result: PiToolResult<QueryDetails>): AgentResult {
-    if (!result.success) {
-      return { type: 'error', message: result.content };
-    }
-
-    const details = result.details;
-    if (details?.formattedMessage != null) {
-      return {
-        type: 'message',
-        message: details.formattedMessage,
-        parseMode: 'Markdown',
-      };
-    }
-
-    return { type: 'message', message: result.content };
   },
 };

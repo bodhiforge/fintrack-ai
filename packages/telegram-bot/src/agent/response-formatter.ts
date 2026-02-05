@@ -3,7 +3,8 @@
  * Formats query results for Telegram messages
  */
 
-import type { ParsedQuery, QuerySummary, Transaction } from '@fintrack-ai/core';
+import type { Transaction } from '@fintrack-ai/core';
+import type { ParsedQuery, QuerySummary } from './query-executor.js';
 
 // ============================================
 // Category Display Names

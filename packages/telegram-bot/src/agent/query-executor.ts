@@ -4,10 +4,38 @@
  */
 
 import type { Transaction, Currency, Category } from '@fintrack-ai/core';
-import type { ParsedQuery, QuerySummary, ToolResult } from '@fintrack-ai/core';
 
 // ============================================
-// Types
+// Query Types (moved from core)
+// ============================================
+
+export type QueryType = 'total' | 'breakdown' | 'history' | 'balance' | 'settlement';
+
+export interface TimeRange {
+  readonly start: string;
+  readonly end: string;
+  readonly label?: string;
+}
+
+export interface ParsedQuery {
+  readonly queryType: QueryType;
+  readonly timeRange?: TimeRange;
+  readonly category?: string;
+  readonly person?: string;
+  readonly limit?: number;
+  readonly sqlWhere: string;
+  readonly sqlOrderBy?: string;
+}
+
+export interface QuerySummary {
+  readonly totalAmount: number;
+  readonly transactionCount: number;
+  readonly byCategory?: Readonly<Record<string, number>>;
+  readonly byPerson?: Readonly<Record<string, number>>;
+}
+
+// ============================================
+// Local Types
 // ============================================
 
 export interface QueryExecutorContext {
@@ -20,6 +48,16 @@ export interface QueryResult {
   readonly transactions: readonly Transaction[];
   readonly total: number;
   readonly summary: QuerySummary;
+}
+
+interface QueryExecutorResult {
+  readonly success: boolean;
+  readonly data?: QueryResult;
+  readonly error?: string;
+  readonly followUp?: {
+    readonly type: 'clarify';
+    readonly message: string;
+  };
 }
 
 // ============================================
@@ -49,15 +87,8 @@ function rowToTransaction(row: Readonly<Record<string, unknown>>): Transaction {
 // SQL Sanitization
 // ============================================
 
-/**
- * Remove ORDER BY, LIMIT, and other clauses from WHERE clause
- * The LLM sometimes includes these in sqlWhere by mistake
- */
 function sanitizeSqlWhere(sqlWhere: string): string {
-  // Remove semicolons (prevents multiple statement injection)
   const noSemicolons = sqlWhere.replace(/;/g, '');
-
-  // Find earliest occurrence of clauses that don't belong in WHERE
   const upperCase = noSemicolons.toUpperCase();
   const clausePositions = ['ORDER BY', 'LIMIT', 'GROUP BY']
     .map(clause => upperCase.indexOf(clause))
@@ -67,29 +98,23 @@ function sanitizeSqlWhere(sqlWhere: string): string {
     ? Math.min(...clausePositions)
     : noSemicolons.length;
 
-  // Truncate at earliest invalid clause and remove trailing AND/OR
   return noSemicolons
     .substring(0, truncateAt)
     .replace(/\s+(AND|OR)\s*$/i, '')
     .trim();
 }
 
-/**
- * Remove LIMIT from ORDER BY clause
- */
 function sanitizeSqlOrderBy(sqlOrderBy: string | undefined): string {
   if (sqlOrderBy == null) {
     return 'created_at DESC';
   }
 
-  // Remove semicolons and LIMIT clause
   const noSemicolons = sqlOrderBy.replace(/;/g, '');
   const limitIndex = noSemicolons.toUpperCase().indexOf('LIMIT');
   const sanitized = limitIndex !== -1
     ? noSemicolons.substring(0, limitIndex).trim()
     : noSemicolons.trim();
 
-  // Return default if empty after sanitization
   return sanitized !== '' ? sanitized : 'created_at DESC';
 }
 
@@ -100,11 +125,10 @@ function sanitizeSqlOrderBy(sqlOrderBy: string | undefined): string {
 export async function executeQuery(
   query: ParsedQuery,
   context: QueryExecutorContext
-): Promise<ToolResult<QueryResult>> {
+): Promise<QueryExecutorResult> {
   const { db, projectId } = context;
-
-  // Sanitize sqlWhere to remove any ORDER BY/LIMIT that LLM might have included
   const sanitizedWhere = sanitizeSqlWhere(query.sqlWhere);
+
   console.log('[QueryExecutor] === SQL DEBUG ===');
   console.log('[QueryExecutor] projectId:', projectId);
   console.log('[QueryExecutor] queryType:', query.queryType);
@@ -112,7 +136,6 @@ export async function executeQuery(
   console.log('[QueryExecutor] Sanitized sqlWhere:', sanitizedWhere);
 
   try {
-    // For balance/settlement, delegate to existing commands
     if (query.queryType === 'balance' || query.queryType === 'settlement') {
       return {
         success: true,
@@ -130,19 +153,16 @@ export async function executeQuery(
       };
     }
 
-    // For breakdown query, use GROUP BY
     if (query.queryType === 'breakdown') {
       return executeBreakdownQuery(query, context);
     }
 
-    // Build count query
     const countSql = `
       SELECT COUNT(*) as total
       FROM transactions
       WHERE project_id = ? AND ${sanitizedWhere}
     `;
 
-    // Build data query
     const limit = query.limit ?? 50;
     const orderBy = sanitizeSqlOrderBy(query.sqlOrderBy);
     console.log('[QueryExecutor] Original sqlOrderBy:', query.sqlOrderBy);
@@ -158,7 +178,6 @@ export async function executeQuery(
     console.log('[QueryExecutor] Full countSql:', countSql.replace('?', `'${projectId}'`));
     console.log('[QueryExecutor] Full dataSql:', dataSql.replace(/\?/g, (_, i) => i === 0 ? `'${projectId}'` : String(limit)));
 
-    // Execute queries
     const countResult = await db.prepare(countSql).bind(projectId).first();
     const dataResult = await db.prepare(dataSql).bind(projectId, limit).all();
 
@@ -189,7 +208,7 @@ export async function executeQuery(
 async function executeBreakdownQuery(
   query: ParsedQuery,
   context: QueryExecutorContext
-): Promise<ToolResult<QueryResult>> {
+): Promise<QueryExecutorResult> {
   const { db, projectId } = context;
   const sanitizedWhere = sanitizeSqlWhere(query.sqlWhere);
 

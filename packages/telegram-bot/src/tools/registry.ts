@@ -7,7 +7,7 @@ import { zodToJsonSchema } from 'zod-to-json-schema';
 import type { Tool, ToolDefinition } from '@fintrack-ai/core';
 import { recordTool } from './record-tool.js';
 import { queryTool } from './query-tool.js';
-import { modifyAmountTool, modifyMerchantTool, modifyCategoryTool } from './modify-tool-factory.js';
+import { modifyTool } from './modify-tool.js';
 import { deleteTool } from './delete-tool.js';
 
 // ============================================
@@ -20,15 +20,11 @@ export class ToolRegistry {
   constructor() {
     this.register(recordTool);
     this.register(queryTool);
-    this.register(modifyAmountTool);
-    this.register(modifyMerchantTool);
-    this.register(modifyCategoryTool);
+    this.register(modifyTool);
     this.register(deleteTool);
   }
 
-  register<TParams, TDetails, TDatabase>(
-    tool: Tool<TParams, TDetails, TDatabase>
-  ): void {
+  register<TParams>(tool: Tool<TParams>): void {
     this.tools.set(tool.name, tool as Tool);
   }
 
@@ -53,10 +49,6 @@ export class ToolRegistry {
       },
     }));
   }
-
-  getNames(): readonly string[] {
-    return [...this.tools.keys()];
-  }
 }
 
 // ============================================
@@ -70,8 +62,4 @@ export function getToolRegistry(): ToolRegistry {
     registryInstance = new ToolRegistry();
   }
   return registryInstance;
-}
-
-export function createToolRegistry(): ToolRegistry {
-  return new ToolRegistry();
 }
